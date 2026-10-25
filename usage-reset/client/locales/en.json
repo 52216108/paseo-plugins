@@ -1,0 +1,21 @@
+{
+  "title": "Usage resets",
+  "loading": "Loading usage…",
+  "error": "Could not load usage: {{message}}",
+  "empty": "No usage reports on this host",
+  "retry": "Refresh",
+  "unavailable": "Usage unavailable",
+  "used": "{{pct}}% used",
+  "today": "Today {{time}}",
+  "tomorrow": "Tomorrow {{time}}",
+  "resetsAt": "resets {{when}}",
+  "noReset": "no reset time",
+  "inDays": "in {{days}}d {{hours}}h",
+  "inHours": "in {{hours}}h {{minutes}}m",
+  "inMinutes": "in {{minutes}}m",
+  "resetPassed": "reset time passed, refresh to update",
+  "fetchedAt": "Updated {{time}}",
+  "labelSession": "5-hour",
+  "labelWeekly": "Weekly",
+  "labelMonthly": "Monthly"
+}

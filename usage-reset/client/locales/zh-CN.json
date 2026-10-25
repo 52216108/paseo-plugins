@@ -1,0 +1,21 @@
+{
+  "title": "限额刷新",
+  "loading": "正在读取用量…",
+  "error": "读取用量失败：{{message}}",
+  "empty": "这台主机没有用量数据",
+  "retry": "刷新",
+  "unavailable": "暂时拿不到用量",
+  "used": "已用 {{pct}}%",
+  "today": "今天 {{time}}",
+  "tomorrow": "明天 {{time}}",
+  "resetsAt": "{{when}} 刷新",
+  "noReset": "没有刷新时间",
+  "inDays": "还有 {{days}} 天 {{hours}} 小时",
+  "inHours": "还有 {{hours}} 小时 {{minutes}} 分",
+  "inMinutes": "还有 {{minutes}} 分钟",
+  "resetPassed": "已过刷新时间，点刷新更新",
+  "fetchedAt": "更新于 {{time}}",
+  "labelSession": "5 小时",
+  "labelWeekly": "周限额",
+  "labelMonthly": "月限额"
+}

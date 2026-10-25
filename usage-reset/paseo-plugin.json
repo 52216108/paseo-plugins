@@ -1,0 +1,14 @@
+{
+  "id": "usage-reset",
+  "name": "Usage reset times",
+  "description": "Show the exact time each Claude and Codex usage limit resets",
+  "translations": {
+    "zh-CN": {
+      "name": "限额刷新时间",
+      "description": "显示 Claude / Codex 5 小时限额、周限额具体在几点刷新"
+    }
+  },
+  "requirements": {
+    "paseo": ">=0.13.0"
+  }
+}
