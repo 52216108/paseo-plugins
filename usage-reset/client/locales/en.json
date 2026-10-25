@@ -5,7 +5,6 @@
   "empty": "No usage reports on this host",
   "retry": "Refresh",
   "unavailable": "Usage unavailable",
-  "used": "{{pct}}% used",
   "today": "Today {{time}}",
   "tomorrow": "Tomorrow {{time}}",
   "resetsAt": "resets {{when}}",
@@ -17,5 +16,9 @@
   "fetchedAt": "Updated {{time}}",
   "labelSession": "5-hour",
   "labelWeekly": "Weekly",
-  "labelMonthly": "Monthly"
+  "labelMonthly": "Monthly",
+  "rowLabel": "Limits",
+  "remaining": "{{pct}}% left",
+  "shortWeekly": "wk",
+  "shortMonthly": "mo"
 }

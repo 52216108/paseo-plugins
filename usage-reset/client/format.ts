@@ -60,3 +60,10 @@ export function localizeLabel(id: string, label: string, t: Translate): string {
   }
   return label;
 }
+
+// 侧边栏的短名：daemon 给 "5h" / "wk" / "wk Fable"，"wk"、"mo" 换成 App 语言
+export function localizeShortLabel(shortLabel: string, t: Translate): string {
+  if (shortLabel.startsWith("wk")) return t("shortWeekly") + shortLabel.slice(2);
+  if (shortLabel.startsWith("mo")) return t("shortMonthly") + shortLabel.slice(2);
+  return shortLabel;
+}

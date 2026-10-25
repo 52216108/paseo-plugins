@@ -5,7 +5,6 @@
   "empty": "这台主机没有用量数据",
   "retry": "刷新",
   "unavailable": "暂时拿不到用量",
-  "used": "已用 {{pct}}%",
   "today": "今天 {{time}}",
   "tomorrow": "明天 {{time}}",
   "resetsAt": "{{when}} 刷新",
@@ -17,5 +16,9 @@
   "fetchedAt": "更新于 {{time}}",
   "labelSession": "5 小时",
   "labelWeekly": "周限额",
-  "labelMonthly": "月限额"
+  "labelMonthly": "月限额",
+  "rowLabel": "限额",
+  "remaining": "剩余 {{pct}}%",
+  "shortWeekly": "周",
+  "shortMonthly": "月"
 }
