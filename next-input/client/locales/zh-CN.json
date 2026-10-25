@@ -29,5 +29,6 @@
   "cliMissing": "未找到 Claude CLI，已查找以下位置：",
   "cliError": "无法检查 Claude CLI，请重试。",
   "checkAgain": "重新检查",
-  "sendSuggestion": "发送建议"
+  "sendSuggestion": "发送建议",
+  "needsEdit": "此建议含敏感操作或引用，请先修改文字再发送。"
 }

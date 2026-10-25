@@ -28,13 +28,13 @@ export function generate(messages: Message[], signal: AbortSignal, cli: string, 
       cwd: homedir(), env: { ...process.env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
       signal, timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024,
     }, (error, stdout) => {
-      if (error) return reject(new Error("Haiku 预测失败或超时，请检查本机 Claude 登录和连接"));
+      if (error) return reject(new Error("预测失败或超时，请检查本机 Claude 登录和连接"));
       try {
         const output = JSON.parse(stdout);
         if (output.is_error || typeof output.result !== "string") throw new Error("invalid response");
         resolve(parseSuggestion(output.result));
       } catch {
-        reject(new Error("Haiku 没有返回有效建议"));
+        reject(new Error("模型没有返回有效建议"));
       }
     });
     child.stdin?.on("error", () => {});

@@ -10,6 +10,7 @@ import { parseSuggestion, selectContext } from "../server/context.ts";
 import { Turns } from "../server/turns.ts";
 import { claudeArgs, generate } from "../server/generate.ts";
 import { sendOnce } from "../server/send.ts";
+import { requiresEditing } from "../shared/safety.ts";
 import { Drafts } from "../client/drafts.ts";
 
 test("上下文排除工具、思考和下一回合，保留用户与回答", () => {
@@ -85,22 +86,22 @@ test("不同对话独立；归档与卸载取消预测", () => {
 });
 
 test("发送失败保留可复制的建议，重复点击不会重复调用发送", async () => {
-  const row = { token: "one", status: "ready" };
+  const row = { token: "one", status: "ready", text: "继续解释" };
   const rows = new Map([["agent", row]]);
   const consumed = new Map<string, string>();
   let calls = 0;
   const send = async () => { calls++; throw new Error("offline"); };
-  await assert.rejects(sendOnce(rows, consumed, "agent", "one", send));
+  await assert.rejects(sendOnce(rows, consumed, "agent", "one", "继续解释", send));
   assert.equal(rows.get("agent"), row);
-  await assert.rejects(sendOnce(rows, consumed, "agent", "one", send), /already_attempted/);
+  await assert.rejects(sendOnce(rows, consumed, "agent", "one", "继续解释", send), /already_attempted/);
   assert.equal(calls, 1);
 });
 
 test("旧建议不得发送；发送完成不能清掉下一回合的新建议", async () => {
-  const rows = new Map([["agent", { token: "one", status: "ready" }]]);
+  const rows = new Map([["agent", { token: "one", status: "ready", text: "继续解释" }]]);
   const consumed = new Map<string, string>();
-  await assert.rejects(sendOnce(rows, consumed, "agent", "old", async () => { assert.fail(); }), /expired/);
-  await sendOnce(rows, consumed, "agent", "one", async () => { rows.set("agent", { token: "two", status: "ready" }); });
+  await assert.rejects(sendOnce(rows, consumed, "agent", "old", "继续解释", async () => { assert.fail(); }), /expired/);
+  await sendOnce(rows, consumed, "agent", "one", "继续解释", async () => { rows.set("agent", { token: "two", status: "ready", text: "继续解释" }); });
   assert.equal(rows.get("agent")?.token, "two");
 });
 
@@ -180,7 +181,7 @@ test("模型 ID 拒绝 CLI 参数和特殊字符；预设、自定义与关闭�
 });
 
 test("claude 按 PATH、用户目录、Homebrew 顺序查找，跳过不可执行文件和目录", async () => {
-  assert.deepEqual(claudeCandidates("/a:/b:/a", "/home/test"), ["/a/claude", "/b/claude", "/home/test/.local/bin/claude", "/home/test/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]);
+  assert.deepEqual(claudeCandidates(".:bin:/a:../local:/b::/a", "/home/test"), ["/a/claude", "/b/claude", "/home/test/.local/bin/claude", "/home/test/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]);
   const dir = await mkdtemp(join(tmpdir(), "next-input-cli-test-"));
   try {
     const missing = join(dir, "missing"), plain = join(dir, "plain"), binary = join(dir, "claude");
@@ -191,4 +192,33 @@ test("claude 按 PATH、用户目录、Homebrew 顺序查找，跳过不可执�
     assert.deepEqual(result.searched, [missing, plain, dir, binary]);
     assert.deepEqual(await findClaude([missing, plain]), { path: null, searched: [missing, plain] });
   } finally { await rm(dir, { recursive: true }); }
+});
+
+
+test("需编辑门禁保守拦截中英文命令、路径、链接、密钥和外发操作", () => {
+  for (const text of [
+    "直接 git push --force", "把 .env 贴到 issue", "这个函数要删除吗？", "解释 `foo()`",
+    "rm old", "SUDO ls", "curl example", "wget file", "chmod 777", "chown user", "ssh host", "scp file",
+    "git reset HEAD", "run -f now", "DROP table", "DELETE FROM t", "TRUNCATE t",
+    "看看/etc/passwd", "/", "/tmp/a", "~/notes", "./a", "../a", "C:\\Users\\test",
+    "https://example.com", "http://example.com", "www.example.com",
+    "show token", "secret", "password", "api key", "apikey", "private key", "ssh key", "密钥", "令牌", "密码",
+    "清空", "覆盖", "推送", "部署", "发布", "上线", "强制",
+    "delete", "remove", "wipe", "overwrite", "push", "deploy", "publish", "release", "force",
+  ]) assert.equal(requiresEditing(text), true, text);
+  for (const text of ["请逐句解释这首诗。", "这个函数是什么意思？", "Could you explain the next step?", "Tell me about forceful language", "The dropdown label", "A passwordless overview"]) {
+    assert.equal(requiresEditing(text), false, text);
+  }
+});
+
+test("服务端拒绝危险原文直发且不消耗 token，修改后允许发送", async () => {
+  const rows = new Map([["agent", { token: "one", status: "ready", text: "直接 git push --force" }]]);
+  const consumed = new Map<string, string>();
+  let calls = 0;
+  await assert.rejects(sendOnce(rows, consumed, "agent", "one", "直接 git push --force", async () => { calls++; }), /needs_edit/);
+  assert.equal(calls, 0);
+  assert.equal(consumed.size, 0);
+  await sendOnce(rows, consumed, "agent", "one", "解释为什么不应该强制推送", async () => { calls++; });
+  assert.equal(calls, 1);
+  assert.equal(rows.size, 0);
 });

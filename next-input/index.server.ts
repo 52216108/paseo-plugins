@@ -87,7 +87,7 @@ export default function contribute(server: PluginServerContext) {
     }, expired);
   });
   server.handle(sendSuggestion, async ({ agentId, token, text }, { paseo }) => {
-    await sendOnce(suggestions, consumed, agentId, token, () => paseo.agents.ref(agentId).send(text));
+    await sendOnce(suggestions, consumed, agentId, token, text, () => paseo.agents.ref(agentId).send(text));
     return {};
   });
   return () => { for (const remove of removers) remove(); unsubscribe(); reset(); };

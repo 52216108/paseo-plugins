@@ -1,11 +1,11 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 
 export function claudeCandidates(path = process.env.PATH ?? "", home = homedir()): string[] {
   return [...new Set([
-    ...path.split(delimiter).filter(Boolean).map(dir => resolve(dir, "claude")),
+    ...path.split(delimiter).filter(isAbsolute).map(dir => resolve(dir, "claude")),
     join(home, ".local/bin/claude"), join(home, ".claude/local/claude"),
     "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
   ])];
