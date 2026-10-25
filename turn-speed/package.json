@@ -33,7 +33,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/52216108/paseo-mesh.git",
-    "directory": "plugins/turn-speed"
+    "url": "git+https://github.com/52216108/paseo-plugins.git",
+    "directory": "turn-speed"
   }
 }
