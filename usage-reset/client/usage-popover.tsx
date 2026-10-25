@@ -1,6 +1,6 @@
 import { useTranslation, type PluginPopoverProps } from "@getpaseo/plugin/client";
 import { ScrollView } from "@getpaseo/plugin/client/ui";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { formatClock, formatRemaining, formatWhen, localizeLabel, roundToMinute } from "./format";
 import { messages } from "./messages";
@@ -10,6 +10,10 @@ export function UsagePopover({ theme, layout }: PluginPopoverProps) {
   const { t, locale } = useTranslation(messages);
   const { state, reload } = useUsage();
   const now = useNow(30_000);
+  // 打开时拉一次最新的；数据与侧边栏共用，侧边栏会同步更新
+  useEffect(() => {
+    void reload();
+  }, [reload]);
   const styles = useMemo(
     () => ({
       root: { padding: layout.compact ? 16 : 14, gap: 12, minWidth: 300 },
