@@ -1,7 +1,10 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { usePaseo } from "@getpaseo/plugin/client";
-import type { PaseoApi, PaseoProviderUsageResult } from "@getpaseo/client";
 import { useEffect, useState, useSyncExternalStore } from "react";
+
+// 类型都从插件 SDK 推导，不直接引 @getpaseo/client：从 Git 安装时没有 node_modules，daemon 只提供 SDK 本身
+type PaseoApi = ReturnType<typeof usePaseo>;
+type PaseoProviderUsageResult = Awaited<ReturnType<PaseoApi["providers"]["listUsage"]>>;
 
 export type ProviderUsage = PaseoProviderUsageResult["providers"][number];
 export type UsageWindow = ProviderUsage["windows"][number];
