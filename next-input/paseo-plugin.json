@@ -1,0 +1,7 @@
+{
+  "id": "next-input",
+  "name": "Next message suggestion",
+  "description": "Predict one editable next message with Haiku using the recent conversation",
+  "translations": { "zh-CN": { "name": "下一句建议", "description": "用 Haiku 根据最近的对话生成一条可编辑的输入建议" } },
+  "requirements": { "paseo": ">=0.13.0" }
+}

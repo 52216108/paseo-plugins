@@ -1,0 +1,9 @@
+# Next message suggestion
+
+After each completed reply, shows one context-aware suggestion below the latest answer. The full sentence wraps when needed. Click the upward arrow to send the suggestion directly, or click its text to edit it in place before sending or copying it into the main input. Clicking the text alone does not send it. When there is no useful prediction, nothing is shown.
+
+Requires Paseo 0.13 or later and a signed-in Claude CLI on the daemon host. Uses Haiku with the existing Claude account, endpoint and proxy, consuming that account’s usage. Each completed turn makes at most one prediction request with a 30-second timeout and no automatic retry. Starting another turn cancels the previous prediction. Subagent turns are excluded.
+
+Each request reads up to eight recent user messages and assistant replies from the current conversation, capped at 12,000 characters. Tool results, reasoning and attachment files are excluded. Private text contained in visible messages is still sent to the configured Claude service. Prediction disables tools, MCP, skills and custom hooks, does not perform tasks, and does not create Paseo subagents or persistent Claude sessions. Suggestions are displayed as timeline components, whose storage and restoration are managed by Paseo. They are not sent to the main model as user messages until you press Send. Conversation text and raw model responses are not logged by this plugin.
+
+Automatic prediction can be disabled in settings. A failed request shows an unavailable message instead of a fixed suggestion. The interface defaults to English and follows the app’s Simplified Chinese locale. Suggestions scroll with the conversation. Paseo does not expose a public composer draft API, so this plugin does not fill the original input or provide Tab-to-accept completion.
