@@ -1,3 +1,9 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { Predictions } from "../server/predictions.ts";
+import { validModelId } from "../shared/model.ts";
+import { claudeCandidates, findClaude } from "../server/claude.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseSuggestion, selectContext } from "../server/context.ts";
@@ -103,7 +109,10 @@ test("组件重新挂载后保留编辑草稿和发送状态，不跨建议或�
   drafts.update("one", "原建议", { text: "编辑过的草稿", expanded: true });
   drafts.update("one", "原建议", { attempted: true });
   assert.equal(drafts.get("one", "原建议").text, "编辑过的草稿");
+  assert.equal(drafts.edited("one")?.sourceText, "原建议");
   assert.equal(drafts.get("one", "原建议").attempted, true);
+  drafts.update("one", "原建议", { sent: true });
+  assert.equal(drafts.edited("one"), undefined);
   assert.equal(drafts.get("two", "另一句").text, "另一句");
   assert.equal(new Drafts().get("one", "原建议").text, "原建议");
 });
@@ -115,5 +124,71 @@ test("预测进程禁用工具、MCP、自定义 hooks 和持久化，不自动�
   for (const flag of ["--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"]) assert.ok(args.includes(flag));
   assert.equal(args.includes("--fallback-model"), false);
   const controller = new AbortController(); controller.abort();
-  await assert.rejects(generate([], controller.signal), /取消/);
+  await assert.rejects(generate([], controller.signal, "/unused/claude"), /取消/);
+});
+
+test("按 token 惰性生成，多端共享进行中的 Promise，完成后复用结果", async () => {
+  const cache = new Predictions<string>();
+  let release!: (value: string) => void;
+  let calls = 0;
+  const work = () => { calls++; return new Promise<string>(resolve => { release = resolve; }); };
+  assert.equal(calls, 0);
+  const a = cache.get("agent", "one", () => true, work, "expired");
+  const b = cache.get("agent", "one", () => true, work, "expired");
+  assert.equal(a, b);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  release("ready");
+  assert.equal(await a, "ready");
+  assert.equal(await cache.get("agent", "one", () => true, work, "expired"), "ready");
+  assert.equal(calls, 1);
+});
+
+test("过期 token 不触发调用；进行中回合失效也只返回 expired", async () => {
+  const cache = new Predictions<string>();
+  assert.equal(await cache.get("a", "old", () => false, async () => { assert.fail(); }, "expired"), "expired");
+  let current = true;
+  let release!: (value: string) => void;
+  const request = cache.get("a", "one", () => current, () => new Promise<string>(resolve => { release = resolve; }), "expired");
+  await Promise.resolve(); current = false; cache.remove("a");
+  const newer = cache.get("a", "two", () => true, async () => "new", "expired");
+  release("old");
+  assert.equal(await request, "expired");
+  assert.equal(await newer, "new");
+  assert.equal(await cache.get("a", "two", () => true, async () => { assert.fail(); }, "expired"), "new");
+});
+
+test("空建议、失败结果也缓存，不会因重挂载重试", async () => {
+  const cache = new Predictions<string>();
+  for (const value of ["empty", "error", "unavailable"]) {
+    assert.equal(await cache.get(value, "one", () => true, async () => value, "expired"), value);
+    assert.equal(await cache.get(value, "one", () => true, async () => { assert.fail(); }, "expired"), value);
+  }
+});
+
+test("模型 ID 拒绝 CLI 参数和特殊字符；预设、自定义与关闭思考传入 CLI", () => {
+  for (const model of ["haiku", "sonnet", "opus", "claude-sonnet-4-6", "opus[1m]", "my_model.1"]) {
+    assert.equal(validModelId(model), true);
+    const args = claudeArgs(model);
+    assert.equal(args[args.indexOf("--model") + 1], model);
+    assert.equal(JSON.parse(args[args.indexOf("--settings") + 1]).alwaysThinkingEnabled, false);
+  }
+  for (const model of ["", "--help", "-haiku", "a b", "a\nb", "haiku\n", "x;pwd", "$(id)", "x/y"]) {
+    assert.equal(validModelId(model), false);
+    assert.throws(() => claudeArgs(model), /Invalid model/);
+  }
+});
+
+test("claude 按 PATH、用户目录、Homebrew 顺序查找，跳过不可执行文件和目录", async () => {
+  assert.deepEqual(claudeCandidates("/a:/b:/a", "/home/test"), ["/a/claude", "/b/claude", "/home/test/.local/bin/claude", "/home/test/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]);
+  const dir = await mkdtemp(join(tmpdir(), "next-input-cli-test-"));
+  try {
+    const missing = join(dir, "missing"), plain = join(dir, "plain"), binary = join(dir, "claude");
+    await writeFile(plain, "test", { mode: 0o600 });
+    await writeFile(binary, "#!/bin/sh\n", { mode: 0o700 });
+    const result = await findClaude([missing, plain, dir, binary, "/never-checked"]);
+    assert.equal(result.path, binary);
+    assert.deepEqual(result.searched, [missing, plain, dir, binary]);
+    assert.deepEqual(await findClaude([missing, plain]), { path: null, searched: [missing, plain] });
+  } finally { await rm(dir, { recursive: true }); }
 });

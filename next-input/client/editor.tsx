@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRpc, useTranslation, type PluginTimelineItemProps } from "@getpaseo/plugin/client";
-import { copyText, TextInput } from "@getpaseo/plugin/client/ui";
+import { copyText, Icon, TextInput } from "@getpaseo/plugin/client/ui";
 import { sendSuggestion, type Suggestion } from "../shared/contracts";
 import { messages } from "./messages";
 import type { Draft, Drafts } from "./drafts";
@@ -24,18 +24,16 @@ export function SuggestionEditor({ item, theme, current, drafts }: PluginTimelin
     finally { setBusy(false); }
   }
   if (sent || (!current && !(expanded && text !== row.text))) return null;
-  return <View style={{ gap: 8, alignSelf: "stretch", marginHorizontal: -8, paddingVertical: 8 }}>
-    {!expanded && row.status === "ready" ? <View style={{ flexDirection: "row", alignItems: "center", gap: 12,
-      borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 12, backgroundColor: theme.colors.surface1 }}>
+  return <View style={{ gap: 8, alignSelf: "stretch", paddingVertical: 4 }}>
+    {!expanded && row.status === "ready" ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
       <Pressable accessibilityRole="button" accessibilityLabel={t("suggestion", { text: row.text })}
         onPress={() => update({ expanded: true })} style={{ flex: 1, minWidth: 0 }}>
-        <Text style={{ color: theme.colors.foreground, fontSize: 14, lineHeight: 22 }}>{row.text}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{row.text}</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel={t("send")} disabled={!current || busy || attempted}
-        onPress={() => { void submit(); }} style={{ width: 36, height: 36, borderRadius: 18,
-          alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.colors.border,
-          opacity: !current || busy || attempted ? 0.5 : 1 }}>
-        <Text style={{ color: theme.colors.foreground, fontSize: 22 }}>{busy ? "…" : "↑"}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel={t("sendSuggestion")} disabled={!current || busy || attempted}
+        onPress={() => { void submit(); }} style={{ width: 44, height: 44, flexShrink: 0,
+          alignItems: "center", justifyContent: "center", opacity: !current || busy || attempted ? 0.5 : 1 }}>
+        {busy ? <Text style={muted}>…</Text> : <Icon name="Send" size={14} color={theme.colors.foregroundMuted} />}
       </Pressable>
     </View> : <>
     {row.status === "ready" ? <>
