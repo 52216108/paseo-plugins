@@ -32,7 +32,7 @@ export function SuggestionEditor({ item, theme, current, drafts }: PluginTimelin
     {!expanded && row.status === "ready" ? <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
       <Pressable accessibilityRole="button" accessibilityLabel={t("suggestion", { text: row.text })}
         onPress={() => update({ expanded: true })} style={{ flexShrink: 1, minWidth: 0, zIndex: 1 }}>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{row.text}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>✨ {row.text}</Text>
       </Pressable>
       {!restricted ? <Pressable accessibilityRole="button" accessibilityLabel={t("sendSuggestion")} disabled={!current || busy || attempted}
         hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
