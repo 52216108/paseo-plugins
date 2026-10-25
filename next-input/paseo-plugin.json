@@ -2,6 +2,9 @@
   "id": "next-input",
   "name": "Next message suggestion",
   "description": "Predict one editable next message on demand with a configurable Claude model",
+  "media": [
+    "assets/screenshot.png"
+  ],
   "translations": {
     "zh-CN": {
       "name": "下一句建议",
