@@ -2,6 +2,10 @@
   "id": "usage-reset",
   "name": "Usage reset times",
   "description": "Show the exact time each Claude and Codex usage limit resets",
+  "media": [
+    "assets/screenshot-popover.png",
+    "assets/screenshot-sidebar.png"
+  ],
   "translations": {
     "zh-CN": {
       "name": "限额刷新时间",
