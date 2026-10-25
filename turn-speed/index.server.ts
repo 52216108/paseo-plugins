@@ -36,6 +36,10 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+function isUnknownAgent(error: unknown): boolean {
+  return error instanceof Error && /Unknown agent/.test(error.message);
+}
+
 function logError(stage: string, error: unknown): void {
   // 只记错误信息，不带任何日志内容
   console.error(`turn-speed ${stage}: ${error instanceof Error ? error.message : String(error)}`);
@@ -80,13 +84,19 @@ export default function contribute(server: PluginServerContext) {
         if (row) break;
       }
       if (!row) return;
-      await paseo.agents.ref(event.agent.id).timeline.append({
-        type: "plugin",
-        id: `turn-${turn.startedAt}`,
-        kind: SPEED_ROW_KIND,
-        version: SPEED_ROW_VERSION,
-        data: { ...row },
-      });
+      try {
+        await paseo.agents.ref(event.agent.id).timeline.append({
+          type: "plugin",
+          id: `turn-${turn.startedAt}`,
+          kind: SPEED_ROW_KIND,
+          version: SPEED_ROW_VERSION,
+          data: { ...row },
+        });
+      } catch (error) {
+        // 等日志的这几秒里会话被归档或删掉了（如 title-style 生成标题的临时会话），没地方显示，静默跳过
+        if (isUnknownAgent(error)) return;
+        throw error;
+      }
     } catch (error) {
       logError("turn_ended", error);
     }
