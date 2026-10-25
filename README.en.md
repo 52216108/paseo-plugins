@@ -7,7 +7,7 @@
 | Plugin | What it does | Install |
 |---|---|---|
 | [`turn-speed`](turn-speed/OVERVIEW.md) | After each Claude Code or Codex turn, shows generation speed at the end of the turn (tok/s, output tokens, generation time, request count). Parses the CLI's own session logs locally on the daemon machine and keeps only timestamps and token counts | In the plugin registry: `paseo plugin add 52216108/turn-speed` |
-| [`usage-reset`](usage-reset/OVERVIEW.md) | Adds a **Usage resets** row to the bottom of the sidebar listing each Claude / Codex account's 5-hour and weekly limits with the percentage used and the exact reset time (for example "Tue 10/27 21:00, in 2d 8h"). Only reads the usage report Paseo already fetches | Not in the registry yet; install the local directory (below) |
+| [`usage-reset`](usage-reset/OVERVIEW.md) | Adds a **Limits** row to the bottom of the sidebar showing how much of each Claude / Codex 5-hour and weekly limit is left, colored by headroom; clicking it lists the exact reset time of each (for example "Tue 10/27 21:00, in 2d 8h"). Only reads the usage report Paseo already fetches | Not in the registry yet; install the local directory (below) |
 
 Plugins are installed per daemon, once on each machine; turn on Settings → Plugins → Enable plugins first.
 
