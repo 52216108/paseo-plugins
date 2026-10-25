@@ -1,4 +1,4 @@
-Shows the exact time each usage limit resets. Paseo's built-in usage view tells you a limit resets "in 2 days"; this plugin adds a **Limits** row to the bottom of the sidebar. The row itself shows how much of each 5-hour and weekly limit is left (for example "97% 5h  18% wk" for Claude), colored green, yellow, or red by headroom. Clicking it opens a list with the clock time of each reset, for example "Tue 10/27 21:00, in 2d 8h".
+Shows the exact time each usage limit resets. Paseo's built-in usage view tells you a limit resets "in 2 days"; this plugin adds one row per account to the bottom of the sidebar. Each row shows how much of the 5-hour and weekly limits is left (for example "Claude  97% 5h  18% wk", "Codex  52% wk"), colored green, yellow, or red by headroom. Clicking it opens a list with the clock time of each reset, for example "Tue 10/27 21:00, in 2d 8h".
 
 ## What it shows
 
