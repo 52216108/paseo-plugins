@@ -1,7 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useTranslation, type PluginPopoverProps } from "@getpaseo/plugin/client";
 import { Icon, ScrollView } from "@getpaseo/plugin/client/ui";
-import { Fragment, useEffect, useMemo } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { formatClock, formatRemaining, formatWhen, localizeLabel, roundToMinute } from "./format";
 import { messages, type Translate } from "./messages";
@@ -17,7 +17,15 @@ import {
   type UsageWindow,
 } from "./usage-data";
 
-const SEGMENTS = 30;
+// 进度条格子按实际宽度排：每格 3px 宽、间隔 2px，窄了也保持细密
+const SEGMENT_WIDTH = 3;
+const SEGMENT_GAP = 2;
+
+// daemon 给的名字形如 "Claude (someone@example.com)"，拆成名字和账户，账户单独淡显
+function splitDisplayName(displayName: string): { name: string; account: string | null } {
+  const match = displayName.match(/^(.+?) \((.+)\)$/);
+  return match ? { name: match[1], account: match[2] } : { name: displayName, account: null };
+}
 
 function makeStyles(theme: PluginTheme, compact: boolean) {
   return {
@@ -37,7 +45,8 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     divider: { height: 1, backgroundColor: theme.colors.border },
     provider: { gap: 9 },
     providerHeader: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
-    providerName: { color: theme.colors.foreground, fontSize: 13, fontWeight: "600" as const, flexShrink: 1 },
+    providerName: { color: theme.colors.foreground, fontSize: 13, fontWeight: "600" as const },
+    account: { color: theme.colors.foregroundMuted, fontSize: 11, flexShrink: 1 },
     plan: {
       paddingHorizontal: 6,
       paddingVertical: 1,
@@ -46,9 +55,9 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     },
     planText: {
       color: theme.colors.foregroundMuted,
-      fontSize: 9,
+      fontSize: 10,
       fontWeight: "600" as const,
-      letterSpacing: 0.5,
+      letterSpacing: 0.3,
     },
     window: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
     windowBody: { flex: 1, gap: 4 },
@@ -56,10 +65,10 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     windowLabel: { color: theme.colors.foregroundMuted, fontSize: 12 },
     pctLabel: { color: theme.colors.foregroundMuted, fontSize: 12 },
     pct: { color: theme.colors.foreground, fontSize: 12, fontWeight: "700" as const },
-    bar: { flexDirection: "row" as const, gap: 1.5, height: 10 },
-    segment: { flex: 1, borderRadius: 1.5 },
+    bar: { flexDirection: "row" as const, justifyContent: "space-between" as const, height: 12 },
+    segment: { width: SEGMENT_WIDTH, borderRadius: SEGMENT_WIDTH / 2 },
     resetRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
-    when: { color: theme.colors.foreground, fontSize: 11, fontWeight: "500" as const },
+    when: { color: theme.colors.foregroundMuted, fontSize: 11 },
     muted: { color: theme.colors.foregroundMuted, fontSize: 11 },
     eye: { padding: 2 },
   };
@@ -67,17 +76,21 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
 
 type Styles = ReturnType<typeof makeStyles>;
 
-// 分段进度条：亮色格子数 = 剩余百分比，其余格子同色淡显
+// 分段进度条：亮色格子占比 = 剩余百分比，其余格子同色淡显
 function SegmentBar({ pct, color, styles }: { pct: number; color: string; styles: Styles }) {
-  const filled = Math.round((Math.max(0, Math.min(100, pct)) / 100) * SEGMENTS);
+  const [width, setWidth] = useState(0);
+  const count = Math.max(10, Math.floor((width + SEGMENT_GAP) / (SEGMENT_WIDTH + SEGMENT_GAP)));
+  const filled = Math.round((Math.max(0, Math.min(100, pct)) / 100) * count);
   return (
-    <View style={styles.bar}>
-      {Array.from({ length: SEGMENTS }, (_, index) => (
-        <View
-          key={index}
-          style={[styles.segment, { backgroundColor: color, opacity: index < filled ? 1 : 0.2 }]}
-        />
-      ))}
+    <View style={styles.bar} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
+      {width > 0
+        ? Array.from({ length: count }, (_, index) => (
+            <View
+              key={index}
+              style={[styles.segment, { backgroundColor: color, opacity: index < filled ? 1 : 0.15 }]}
+            />
+          ))
+        : null}
     </View>
   );
 }
@@ -165,17 +178,21 @@ function ProviderSection({
 }) {
   const { isHidden, toggle, ready } = sidebar;
   const svg = PROVIDER_ICONS[providerKind(provider.providerId)];
+  const { name, account } = splitDisplayName(provider.displayName);
   return (
     <View style={styles.provider}>
       <View style={styles.providerHeader}>
         {svg ? <Icon icon={{ svg }} size={16} color={theme.colors.foreground} /> : null}
-        <Text style={styles.providerName} numberOfLines={1}>
-          {provider.displayName}
-        </Text>
+        <Text style={styles.providerName}>{name}</Text>
         {provider.planLabel ? (
           <View style={styles.plan}>
             <Text style={styles.planText}>{provider.planLabel.toUpperCase()}</Text>
           </View>
+        ) : null}
+        {account ? (
+          <Text style={styles.account} numberOfLines={1}>
+            {account}
+          </Text>
         ) : null}
       </View>
       {provider.status !== "available" ? (
