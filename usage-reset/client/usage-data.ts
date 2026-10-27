@@ -124,46 +124,51 @@ export function useHiddenWindows() {
   return { isHidden, toggle, ready: settings.status === "ready" };
 }
 
-// 上色看有没有超出预算，不看剩余百分比本身：把限额按时间平均分，周限额每天约 14%，
-// 5 小时限额每小时 20%，月限额每天约 3.3%。当前这一份随便用，用到下一份才提醒：
-// 没超出到这一份为止的累计预算是蓝色，超出不到一份是橙色，超出一份以上是红色。
-// 所以周限额剩 12% 但 7 小时后就刷新，仍然是蓝色。
-// 用固定的明亮色，不取主题的状态色：有的主题状态色偏暗，铺满一整条进度条显得发闷
-const BUDGET_COLORS = { ok: "#4A9DF8", warning: "#FF9F0A", danger: "#FF5A50" } as const;
-type BudgetLevel = keyof typeof BUDGET_COLORS;
+// 进度条只表示剩余多少，统一一种颜色；预算紧不紧由「日均可用」单独表示
+export const BAR_COLOR = "#4A9DF8";
 
+// 日均可用 = 剩余额度 ÷ 离刷新还有几份时间（周、月按天，5 小时按小时），跟平均分的标准额度比：
+// 周限额每天约 14%，5 小时每小时 20%，月限额每天约 3.3%。
+// 不低于标准的 85% 算够用，低于 85% 偏紧，不到一半很紧（留 15% 余量，免得差一点也变色）
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-// daemon 不给窗口时长，按窗口 id 推（Codex 的 id 也是 daemon 按上报时长归一出来的）；第二项是一份预算的时长
-const WINDOW_BUDGETS: ReadonlyArray<readonly [string, number, number]> = [
-  ["five_hour", 5 * HOUR, HOUR],
-  ["weekly", 7 * DAY, DAY],
-  ["monthly", 30 * DAY, DAY],
+// daemon 不给窗口时长，按窗口 id 推（Codex 的 id 也是 daemon 按上报时长归一出来的）
+const WINDOW_BUDGETS: ReadonlyArray<readonly [string, number, "day" | "hour"]> = [
+  ["five_hour", 5 * HOUR, "hour"],
+  ["weekly", 7 * DAY, "day"],
+  ["monthly", 30 * DAY, "day"],
 ];
 
-function budgetLevel(limit: UsageWindow, now: Date): BudgetLevel | null {
-  const left = remainingPct(limit);
-  if (left == null) return null;
-  if (left <= 0) return "danger";
-  const budget = WINDOW_BUDGETS.find(([prefix]) => limit.id.startsWith(prefix));
-  const untilReset = limit.resetsAt ? Date.parse(limit.resetsAt) - now.getTime() : NaN;
-  if (budget && untilReset > 0) {
-    const [, length, unit] = budget;
-    // 用满当前这一份之后应当至少还剩多少
-    const shouldLeft = (Math.max(0, untilReset - unit) / length) * 100;
-    const overspent = shouldLeft - left;
-    if (overspent > (unit / length) * 100) return "danger";
-    if (overspent > 0) return "warning";
-    // 剩得极少时一次大任务就能用光，就算没超预算也提醒
-    return left < 5 ? "warning" : "ok";
-  }
-  // 认不出窗口时长或没有刷新时间，只能按剩余百分比看
-  if (left < 10) return "danger";
-  if (left < 30) return "warning";
-  return "ok";
+export type BudgetLevel = "ok" | "warning" | "danger";
+
+export interface Budget {
+  unit: "day" | "hour";
+  perUnitPct: number;
+  level: BudgetLevel;
 }
 
-export function remainingColor(theme: PluginTheme, limit: UsageWindow, now: Date): string {
-  const level = budgetLevel(limit, now);
-  return level ? BUDGET_COLORS[level] : theme.colors.foregroundMuted;
+export function windowBudget(limit: UsageWindow, now: Date): Budget | null {
+  const left = remainingPct(limit);
+  const budget = WINDOW_BUDGETS.find(([prefix]) => limit.id.startsWith(prefix));
+  const untilReset = limit.resetsAt ? Date.parse(limit.resetsAt) - now.getTime() : NaN;
+  if (left == null || !budget || !(untilReset > 0)) return null;
+  const [, length, unit] = budget;
+  const unitMs = unit === "day" ? DAY : HOUR;
+  // 离刷新不到一份时间时，剩下的就是这一份可用的，没必要再算
+  if (untilReset <= unitMs) return null;
+  const perUnitPct = Math.max(0, left) / (untilReset / unitMs);
+  const ratio = perUnitPct / ((unitMs / length) * 100);
+  const level: BudgetLevel = ratio < 0.5 ? "danger" : ratio < 0.85 ? "warning" : "ok";
+  return { unit, perUnitPct, level };
+}
+
+// 文字用的颜色比进度条深一档，浅色背景上也看得清
+const BUDGET_TEXT_COLORS: Record<BudgetLevel, string> = {
+  ok: "#1F9D55",
+  warning: "#E08600",
+  danger: "#E5484D",
+};
+
+export function budgetColor(level: BudgetLevel): string {
+  return BUDGET_TEXT_COLORS[level];
 }

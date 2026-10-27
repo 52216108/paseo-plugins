@@ -22,5 +22,7 @@
   "shortMonthly": "mo",
   "remainingLabel": "Left",
   "showInSidebar": "Show in sidebar",
-  "hideFromSidebar": "Hide from sidebar"
+  "hideFromSidebar": "Hide from sidebar",
+  "perDay": "{{pct}}%/day",
+  "perHour": "{{pct}}%/hr"
 }

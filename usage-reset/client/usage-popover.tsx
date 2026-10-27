@@ -8,7 +8,9 @@ import { messages, type Translate } from "./messages";
 import { PROVIDER_ICONS } from "./provider-icons";
 import {
   providerKind,
-  remainingColor,
+  BAR_COLOR,
+  budgetColor,
+  windowBudget,
   remainingPct,
   useHiddenWindows,
   useNow,
@@ -69,7 +71,8 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     segment: { width: SEGMENT_WIDTH, borderRadius: SEGMENT_WIDTH / 2 },
     resetRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
     when: { color: theme.colors.foregroundMuted, fontSize: 11 },
-    muted: { color: theme.colors.foregroundMuted, fontSize: 11 },
+    muted: { color: theme.colors.foregroundMuted, fontSize: 11, flexShrink: 1 },
+    budget: { marginLeft: "auto" as const, paddingLeft: 6, fontSize: 11, fontWeight: "600" as const },
     eye: { padding: 2 },
   };
 }
@@ -115,6 +118,7 @@ function WindowRow({
   const { t, locale } = useTranslation(messages);
   const resetsAt = limit.resetsAt ? roundToMinute(limit.resetsAt) : null;
   const left = remainingPct(limit);
+  const budget = windowBudget(limit, now);
   return (
     <View style={styles.window}>
       <View style={styles.windowBody}>
@@ -127,9 +131,7 @@ function WindowRow({
             </Text>
           ) : null}
         </View>
-        {left != null ? (
-          <SegmentBar pct={left} color={remainingColor(theme, limit, now)} styles={styles} />
-        ) : null}
+        {left != null ? <SegmentBar pct={left} color={BAR_COLOR} styles={styles} /> : null}
         <View style={styles.resetRow}>
           <Icon name="History" size={11} color={theme.colors.foregroundMuted} />
           {resetsAt ? (
@@ -140,6 +142,11 @@ function WindowRow({
           ) : (
             <Text style={styles.muted}>{t("noReset")}</Text>
           )}
+          {budget ? (
+            <Text style={[styles.budget, { color: budgetColor(budget.level) }]}>
+              {t(budget.unit === "day" ? "perDay" : "perHour", { pct: Math.round(budget.perUnitPct) })}
+            </Text>
+          ) : null}
         </View>
       </View>
       {left != null ? (
@@ -230,7 +237,11 @@ export function UsagePopover({ theme, layout }: PluginPopoverProps) {
   if (state.kind === "loading") {
     body = <Text style={styles.muted}>{t("loading")}</Text>;
   } else if (state.kind === "error") {
-    body = <Text style={[styles.muted, { color: theme.colors.statusDanger }]}>{t("error", { message: state.message })}</Text>;
+    body = (
+      <Text style={[styles.muted, { color: theme.colors.statusDanger }]}>
+        {t("error", { message: state.message })}
+      </Text>
+    );
   } else if (state.providers.length === 0) {
     body = <Text style={styles.muted}>{t("empty")}</Text>;
   } else {
@@ -239,7 +250,14 @@ export function UsagePopover({ theme, layout }: PluginPopoverProps) {
         {state.providers.map((provider, index) => (
           <Fragment key={provider.providerId}>
             {index > 0 ? <View style={styles.divider} /> : null}
-            <ProviderSection provider={provider} now={now} theme={theme} styles={styles} t={t} sidebar={sidebar} />
+            <ProviderSection
+              provider={provider}
+              now={now}
+              theme={theme}
+              styles={styles}
+              t={t}
+              sidebar={sidebar}
+            />
           </Fragment>
         ))}
       </View>
