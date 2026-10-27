@@ -124,46 +124,46 @@ export function useHiddenWindows() {
   return { isHidden, toggle, ready: settings.status === "ready" };
 }
 
-// 上色看「按现在的速度，刷新前会不会用完」，不看剩余百分比本身：
-// 周限额剩 12% 但 7 小时后就刷新，其实够用；5 小时限额剩 50% 但才过 1 小时，反而要当心。
-// 平时一律蓝色，只有可能撑不到刷新时才变橙、变红，颜色一出现就值得看一眼。
+// 上色看有没有超出预算，不看剩余百分比本身：把限额按时间平均分，周限额每天约 14%，
+// 5 小时限额每小时 20%，月限额每天约 3.3%。当前这一份随便用，用到下一份才提醒：
+// 没超出到这一份为止的累计预算是蓝色，超出不到一份是橙色，超出一份以上是红色。
+// 所以周限额剩 12% 但 7 小时后就刷新，仍然是蓝色。
 // 用固定的明亮色，不取主题的状态色：有的主题状态色偏暗，铺满一整条进度条显得发闷
-const PACE_COLORS = { ok: "#4A9DF8", warning: "#FF9F0A", danger: "#FF5A50" } as const;
-type PaceLevel = keyof typeof PACE_COLORS;
+const BUDGET_COLORS = { ok: "#4A9DF8", warning: "#FF9F0A", danger: "#FF5A50" } as const;
+type BudgetLevel = keyof typeof BUDGET_COLORS;
 
 const HOUR = 3_600_000;
-// daemon 不给窗口时长，按窗口 id 推（Codex 的 id 也是 daemon 按上报时长归一出来的）
-const WINDOW_LENGTHS: ReadonlyArray<readonly [string, number]> = [
-  ["five_hour", 5 * HOUR],
-  ["weekly", 7 * 24 * HOUR],
-  ["monthly", 30 * 24 * HOUR],
+const DAY = 24 * HOUR;
+// daemon 不给窗口时长，按窗口 id 推（Codex 的 id 也是 daemon 按上报时长归一出来的）；第二项是一份预算的时长
+const WINDOW_BUDGETS: ReadonlyArray<readonly [string, number, number]> = [
+  ["five_hour", 5 * HOUR, HOUR],
+  ["weekly", 7 * DAY, DAY],
+  ["monthly", 30 * DAY, DAY],
 ];
-// 窗口刚开头用量数据太少，速度估不准，先按剩余百分比看
-const MIN_ELAPSED_RATIO = 0.15;
 
-function paceLevel(limit: UsageWindow, now: Date): PaceLevel | null {
+function budgetLevel(limit: UsageWindow, now: Date): BudgetLevel | null {
   const left = remainingPct(limit);
   if (left == null) return null;
   if (left <= 0) return "danger";
-  const length = WINDOW_LENGTHS.find(([prefix]) => limit.id.startsWith(prefix))?.[1];
+  const budget = WINDOW_BUDGETS.find(([prefix]) => limit.id.startsWith(prefix));
   const untilReset = limit.resetsAt ? Date.parse(limit.resetsAt) - now.getTime() : NaN;
-  if (length != null && untilReset > 0 && length - untilReset >= length * MIN_ELAPSED_RATIO) {
-    const used = 100 - left;
-    // 剩得极少时一次大任务就能用光，不管速度至少提醒
-    const floor: PaceLevel = left < 5 ? "warning" : "ok";
-    if (used <= 0) return floor;
-    // 按目前的平均速度还能撑多久，跟离刷新还有多久比
-    const ratio = left / (used / (length - untilReset)) / untilReset;
-    if (ratio < 0.5) return "danger";
-    if (ratio < 1) return "warning";
-    return floor;
+  if (budget && untilReset > 0) {
+    const [, length, unit] = budget;
+    // 用满当前这一份之后应当至少还剩多少
+    const shouldLeft = (Math.max(0, untilReset - unit) / length) * 100;
+    const overspent = shouldLeft - left;
+    if (overspent > (unit / length) * 100) return "danger";
+    if (overspent > 0) return "warning";
+    // 剩得极少时一次大任务就能用光，就算没超预算也提醒
+    return left < 5 ? "warning" : "ok";
   }
+  // 认不出窗口时长或没有刷新时间，只能按剩余百分比看
   if (left < 10) return "danger";
   if (left < 30) return "warning";
   return "ok";
 }
 
 export function remainingColor(theme: PluginTheme, limit: UsageWindow, now: Date): string {
-  const level = paceLevel(limit, now);
-  return level ? PACE_COLORS[level] : theme.colors.foregroundMuted;
+  const level = budgetLevel(limit, now);
+  return level ? BUDGET_COLORS[level] : theme.colors.foregroundMuted;
 }
