@@ -128,7 +128,7 @@ function WindowRow({
           ) : null}
         </View>
         {left != null ? (
-          <SegmentBar pct={left} color={remainingColor(theme, left)} styles={styles} />
+          <SegmentBar pct={left} color={remainingColor(theme, limit, now)} styles={styles} />
         ) : null}
         <View style={styles.resetRow}>
           <Icon name="History" size={11} color={theme.colors.foregroundMuted} />

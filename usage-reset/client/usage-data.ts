@@ -124,12 +124,46 @@ export function useHiddenWindows() {
   return { isHidden, toggle, ready: settings.status === "ready" };
 }
 
-// 按剩余额度分档上色，各家用同一套：充足蓝、过半绿、偏少橙、见底红。
+// 上色看「按现在的速度，刷新前会不会用完」，不看剩余百分比本身：
+// 周限额剩 12% 但 7 小时后就刷新，其实够用；5 小时限额剩 50% 但才过 1 小时，反而要当心。
+// 平时一律蓝色，只有可能撑不到刷新时才变橙、变红，颜色一出现就值得看一眼。
 // 用固定的明亮色，不取主题的状态色：有的主题状态色偏暗，铺满一整条进度条显得发闷
-export function remainingColor(theme: PluginTheme, pct: number | null): string {
-  if (pct == null) return theme.colors.foregroundMuted;
-  if (pct >= 70) return "#4A9DF8";
-  if (pct >= 40) return "#34C759";
-  if (pct >= 20) return "#FF9F0A";
-  return "#FF5A50";
+const PACE_COLORS = { ok: "#4A9DF8", warning: "#FF9F0A", danger: "#FF5A50" } as const;
+type PaceLevel = keyof typeof PACE_COLORS;
+
+const HOUR = 3_600_000;
+// daemon 不给窗口时长，按窗口 id 推（Codex 的 id 也是 daemon 按上报时长归一出来的）
+const WINDOW_LENGTHS: ReadonlyArray<readonly [string, number]> = [
+  ["five_hour", 5 * HOUR],
+  ["weekly", 7 * 24 * HOUR],
+  ["monthly", 30 * 24 * HOUR],
+];
+// 窗口刚开头用量数据太少，速度估不准，先按剩余百分比看
+const MIN_ELAPSED_RATIO = 0.15;
+
+function paceLevel(limit: UsageWindow, now: Date): PaceLevel | null {
+  const left = remainingPct(limit);
+  if (left == null) return null;
+  if (left <= 0) return "danger";
+  const length = WINDOW_LENGTHS.find(([prefix]) => limit.id.startsWith(prefix))?.[1];
+  const untilReset = limit.resetsAt ? Date.parse(limit.resetsAt) - now.getTime() : NaN;
+  if (length != null && untilReset > 0 && length - untilReset >= length * MIN_ELAPSED_RATIO) {
+    const used = 100 - left;
+    // 剩得极少时一次大任务就能用光，不管速度至少提醒
+    const floor: PaceLevel = left < 5 ? "warning" : "ok";
+    if (used <= 0) return floor;
+    // 按目前的平均速度还能撑多久，跟离刷新还有多久比
+    const ratio = left / (used / (length - untilReset)) / untilReset;
+    if (ratio < 0.5) return "danger";
+    if (ratio < 1) return "warning";
+    return floor;
+  }
+  if (left < 10) return "danger";
+  if (left < 30) return "warning";
+  return "ok";
+}
+
+export function remainingColor(theme: PluginTheme, limit: UsageWindow, now: Date): string {
+  const level = paceLevel(limit, now);
+  return level ? PACE_COLORS[level] : theme.colors.foregroundMuted;
 }
