@@ -1,17 +1,31 @@
-Shows the exact time each usage limit resets. Paseo's built-in usage view tells you a limit resets "in 2 days"; this plugin adds one row per account, marked by its icon, to the bottom of the sidebar. Each row shows how much of the 5-hour, weekly, and per-model weekly limits is left (for example "93% 5h  17% wk  45% Fable" for Claude, "50% wk" for Codex), colored when you are using it up fast. Clicking a row opens a list with the clock time of each reset, for example "Tue 10/27 21:00, in 2d 7h".
+Shows the exact time each usage limit resets. Paseo's built-in usage view tells you a limit resets "in 2 days"; this plugin adds one row per account, marked by its icon, to the bottom of the sidebar. Each row shows how much of the 5-hour, weekly, and per-model weekly limits is left (for example "98% 5h  12% wk  43% Fable" for Claude, "91% wk" for Codex), colored when you are using it up too fast. Clicking a row opens a list with the clock time of each reset, for example "Tue 10/27 21:00, in 2d 7h".
 
 ## What it shows
 
 For every provider account the daemon reports usage for (Claude, Codex, and others that have limit windows), each window is listed with:
 
 - its name (5-hour, Weekly, Weekly per model, Monthly) and the plan,
-- the percentage left with a segmented bar: blue with 30% or more left, orange from 10% to 30%, red under 10%,
-- the reset time in your local time zone, rounded to the minute, plus the time left,
-- the daily allowance (hourly for the 5-hour limit): what is left divided by the days until reset. Spread evenly, a weekly limit allows about 14% a day, a 5-hour limit 20% an hour, a monthly limit about 3.3% a day. It is green at 85% of that pace or more, orange below 85%, red below half. It is hidden when the reset is less than a day away (an hour for the 5-hour limit).
+- the percentage left with a segmented bar,
+- the reset time in your local time zone, rounded to the minute, plus the time left; today and tomorrow are written as words,
+- the daily allowance (hourly for the 5-hour limit).
 
-Sidebar percentages use the normal text color and turn orange or red when the daily allowance does. An eye toggle beside each window in the list hides it from the sidebar; an account whose windows are all hidden leaves the sidebar. Today and tomorrow are written as words. Labels follow the app language (English, Simplified Chinese).
+An eye toggle beside each window in the list hides it from the sidebar; an account whose windows are all hidden leaves the sidebar. Labels follow the app language (English, Simplified Chinese).
 
-Window lengths are inferred from the window type (5 hours, 7 days, 30 days); windows of unknown length show no daily allowance.
+## Reading the colors
+
+The bar and the daily allowance answer different questions, so they are colored separately.
+
+**The bar shows how much is left.** Blue with 30% or more left, orange from 10% to 30%, red under 10%. Little left is little left: even close to a reset, one large task can use it up.
+
+**The daily allowance shows whether it lasts until the reset.** It is what is left divided by the days until the reset (hours for the 5-hour limit), compared with an even split: about 14% a day for a weekly limit, 20% an hour for a 5-hour limit, about 3.3% a day for a monthly limit.
+
+- 85% of that pace or more: green, your current pace is fine;
+- below 85%: orange, go easier from here;
+- below half: red, at this rate it runs out early.
+
+For example, a weekly limit with 30% left and 3 days to go allows 10% a day, under the 14% pace, so it shows orange. When the reset is less than a day away (an hour for the 5-hour limit), what is left is what you can use today, so no allowance is shown. Window lengths are inferred from the window type (5 hours, 7 days, 30 days); windows of unknown length show no allowance.
+
+**The sidebar** has no room for the allowance. Its percentages use the normal text color and turn orange or red only when the daily allowance does.
 
 ## Freshness
 
