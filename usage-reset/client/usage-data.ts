@@ -1,6 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { usePaseo } from "@getpaseo/plugin/client";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { usePaseo, useSettings } from "@getpaseo/plugin/client";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { sidebarPrefs, windowKey } from "../shared/settings";
 
 // 类型都从插件 SDK 推导，不直接引 @getpaseo/client：从 Git 安装时没有 node_modules，daemon 只提供 SDK 本身
 type PaseoApi = ReturnType<typeof usePaseo>;
@@ -108,4 +109,37 @@ export function toneColor(theme: PluginTheme, tone: UsageWindow["tone"]): string
 // 提供方 id 形如 "claude" 或 "claude:<账户>"，取冒号前的部分对应图标
 export function providerKind(providerId: string): string {
   return providerId.split(":")[0];
+}
+
+// 侧边栏隐藏了哪些窗口；设置还没读到时当作全部显示
+export function useHiddenWindows() {
+  const settings = useSettings(sidebarPrefs);
+  const hidden = settings.status === "ready" ? settings.values.hidden : [];
+  const isHidden = useCallback(
+    (providerId: string, windowId: string) => hidden.includes(windowKey(providerId, windowId)),
+    [hidden],
+  );
+  const toggle = useCallback(
+    (providerId: string, windowId: string) => {
+      if (settings.status !== "ready") return;
+      const key = windowKey(providerId, windowId);
+      const current = settings.values.hidden;
+      const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
+      void settings.save({ hidden: next }, settings.revision);
+    },
+    [settings],
+  );
+  return { isHidden, toggle, ready: settings.status === "ready" };
+}
+
+// 进度条用各家品牌色；接近上限、见底时改用主题的黄、红提醒
+const BRAND_COLORS: Record<string, string> = {
+  claude: "#D97757",
+  codex: "#3B8EF0",
+};
+
+export function barColor(theme: PluginTheme, providerId: string, tone: UsageWindow["tone"]): string {
+  if (tone === "danger") return theme.colors.statusDanger;
+  if (tone === "warning") return theme.colors.statusWarning;
+  return BRAND_COLORS[providerKind(providerId)] ?? theme.colors.accent;
 }

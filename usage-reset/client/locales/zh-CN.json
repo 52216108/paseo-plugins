@@ -18,7 +18,9 @@
   "labelWeekly": "周限额",
   "labelMonthly": "月限额",
   "rowLabel": "限额",
-  "remaining": "剩余 {{pct}}%",
   "shortWeekly": "周",
-  "shortMonthly": "月"
+  "shortMonthly": "月",
+  "remainingLabel": "剩余",
+  "showInSidebar": "在侧边栏显示",
+  "hideFromSidebar": "不在侧边栏显示"
 }

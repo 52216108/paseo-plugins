@@ -18,7 +18,9 @@
   "labelWeekly": "Weekly",
   "labelMonthly": "Monthly",
   "rowLabel": "Limits",
-  "remaining": "{{pct}}% left",
   "shortWeekly": "wk",
-  "shortMonthly": "mo"
+  "shortMonthly": "mo",
+  "remainingLabel": "Left",
+  "showInSidebar": "Show in sidebar",
+  "hideFromSidebar": "Hide from sidebar"
 }

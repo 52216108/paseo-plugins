@@ -10,7 +10,8 @@
     "index.client.tsx",
     "client/",
     "shared/",
-    "assets/"
+    "assets/",
+    "index.server.ts"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -5,7 +5,7 @@ import { localizeShortLabel } from "./format";
 import { messages } from "./messages";
 import { PROVIDER_ICONS } from "./provider-icons";
 import { UsagePopover } from "./usage-popover";
-import { providerKind, remainingPct, toneColor, useUsage } from "./usage-data";
+import { providerKind, remainingPct, toneColor, useHiddenWindows, useUsage } from "./usage-data";
 
 // 按模型的窗口（"wk Fable"）在侧边栏只写模型名，省掉「周」字，一行放得下
 function sidebarLabel(shortLabel: string, t: Parameters<typeof localizeShortLabel>[1]): string {
@@ -14,10 +14,11 @@ function sidebarLabel(shortLabel: string, t: Parameters<typeof localizeShortLabe
 }
 
 // 侧边栏：每个账户一行（挤在一行时后面的账户会被截掉），列出该账户全部限额窗口（5 小时、周、按模型的周限额），
-// 显示剩余百分比并按 tone 上色；数据没到时显示一行「限额」占位
+// 显示剩余百分比并按 tone 上色；弹出层里隐藏的窗口不列，全隐藏的账户整行不显示；数据没到时显示一行「限额」占位
 export function UsageResetSidebarItem({ theme, openPopover }: PluginSidebarItemProps) {
   const { t } = useTranslation(messages);
   const { state } = useUsage();
+  const { isHidden } = useHiddenWindows();
   const open = () => openPopover(UsagePopover);
   const providers =
     state.kind === "ready"
@@ -25,7 +26,10 @@ export function UsageResetSidebarItem({ theme, openPopover }: PluginSidebarItemP
           .filter((provider) => provider.status === "available")
           .map((provider) => ({
             provider,
-            windows: provider.windows.filter((limit) => remainingPct(limit) != null),
+            // 弹出层里点了眼睛隐藏的窗口不在侧边栏显示
+            windows: provider.windows.filter(
+              (limit) => remainingPct(limit) != null && !isHidden(provider.providerId, limit.id),
+            ),
           }))
           .filter(({ windows }) => windows.length > 0)
       : [];
