@@ -31,7 +31,7 @@ function splitDisplayName(displayName: string): { name: string; account: string 
 
 function makeStyles(theme: PluginTheme, compact: boolean) {
   return {
-    root: { padding: compact ? 14 : 10, gap: 10, minWidth: 240, maxWidth: 270 },
+    root: { padding: compact ? 14 : 10, gap: 10, minWidth: 240, maxWidth: 290 },
     header: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
     title: { color: theme.colors.foreground, fontSize: 14, fontWeight: "600" as const, flex: 1 },
     button: {
@@ -72,7 +72,8 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     resetRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
     when: { color: theme.colors.foregroundMuted, fontSize: 11 },
     muted: { color: theme.colors.foregroundMuted, fontSize: 11, flexShrink: 1 },
-    budget: { marginLeft: "auto" as const, paddingLeft: 6, fontSize: 11, fontWeight: "600" as const },
+    // 单独一行，跟上面刷新时间的文字对齐（图标 11 + 间距 4）
+    budget: { paddingLeft: 15, fontSize: 11, fontWeight: "600" as const },
     eye: { padding: 2 },
   };
 }
@@ -135,19 +136,19 @@ function WindowRow({
         <View style={styles.resetRow}>
           <Icon name="History" size={11} color={theme.colors.foregroundMuted} />
           {resetsAt ? (
-            <Text style={styles.muted}>
+            <Text style={styles.muted} numberOfLines={1}>
               <Text style={styles.when}>{t("resetsAt", { when: formatWhen(resetsAt, now, locale, t) })}</Text>
               {` · ${formatRemaining(resetsAt, now, t)}`}
             </Text>
           ) : (
             <Text style={styles.muted}>{t("noReset")}</Text>
           )}
-          {budget ? (
-            <Text style={[styles.budget, { color: budgetColor(budget.level) }]}>
-              {t(budget.unit === "day" ? "perDay" : "perHour", { pct: Math.round(budget.perUnitPct) })}
-            </Text>
-          ) : null}
         </View>
+        {budget ? (
+          <Text style={[styles.budget, { color: budgetColor(budget.level) }]}>
+            {t(budget.unit === "day" ? "perDay" : "perHour", { pct: Math.round(budget.perUnitPct) })}
+          </Text>
+        ) : null}
       </View>
       {left != null ? (
         <Pressable
