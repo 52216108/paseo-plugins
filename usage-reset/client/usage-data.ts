@@ -124,11 +124,12 @@ export function useHiddenWindows() {
   return { isHidden, toggle, ready: settings.status === "ready" };
 }
 
-// 按剩余额度分档上色，各家用同一套：充足蓝、过半绿、偏少橙、见底红
+// 按剩余额度分档上色，各家用同一套：充足蓝、过半绿、偏少橙、见底红。
+// 用固定的明亮色，不取主题的状态色：有的主题状态色偏暗，铺满一整条进度条显得发闷
 export function remainingColor(theme: PluginTheme, pct: number | null): string {
   if (pct == null) return theme.colors.foregroundMuted;
-  if (pct >= 70) return "#3B82F6";
-  if (pct >= 40) return theme.colors.statusSuccess;
-  if (pct >= 20) return "#F59E0B";
-  return theme.colors.statusDanger;
+  if (pct >= 70) return "#4A9DF8";
+  if (pct >= 40) return "#34C759";
+  if (pct >= 20) return "#FF9F0A";
+  return "#FF5A50";
 }

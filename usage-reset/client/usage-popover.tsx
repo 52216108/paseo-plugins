@@ -21,53 +21,47 @@ const SEGMENTS = 30;
 
 function makeStyles(theme: PluginTheme, compact: boolean) {
   return {
-    root: { padding: compact ? 16 : 14, gap: 12, minWidth: 280, maxWidth: 320 },
+    root: { padding: compact ? 14 : 10, gap: 10, minWidth: 240, maxWidth: 270 },
     header: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
-    title: { color: theme.colors.foreground, fontSize: 15, fontWeight: "600" as const, flex: 1 },
+    title: { color: theme.colors.foreground, fontSize: 14, fontWeight: "600" as const, flex: 1 },
     button: {
-      paddingHorizontal: 10,
-      paddingVertical: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
       borderRadius: 6,
       borderWidth: 1,
       borderColor: theme.colors.border,
     },
-    buttonText: { color: theme.colors.foreground, fontSize: 12 },
-    card: {
-      padding: 12,
-      gap: 12,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface1,
-    },
+    buttonText: { color: theme.colors.foreground, fontSize: 11 },
+    // 弹出层本身就是卡片，这里不再套边框，只用分隔线隔开账户
+    card: { gap: 10 },
     divider: { height: 1, backgroundColor: theme.colors.border },
-    provider: { gap: 12 },
-    providerHeader: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
-    providerName: { color: theme.colors.foreground, fontSize: 15, fontWeight: "600" as const, flexShrink: 1 },
+    provider: { gap: 9 },
+    providerHeader: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
+    providerName: { color: theme.colors.foreground, fontSize: 13, fontWeight: "600" as const, flexShrink: 1 },
     plan: {
-      paddingHorizontal: 8,
-      paddingVertical: 2,
+      paddingHorizontal: 6,
+      paddingVertical: 1,
       borderRadius: 999,
       backgroundColor: theme.colors.surface2,
     },
     planText: {
       color: theme.colors.foregroundMuted,
-      fontSize: 11,
+      fontSize: 9,
       fontWeight: "600" as const,
-      letterSpacing: 1,
+      letterSpacing: 0.5,
     },
     window: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
-    windowBody: { flex: 1, gap: 5 },
+    windowBody: { flex: 1, gap: 4 },
     windowTop: { flexDirection: "row" as const, justifyContent: "space-between" as const, gap: 8 },
-    windowLabel: { color: theme.colors.foregroundMuted, fontSize: 13 },
-    pctLabel: { color: theme.colors.foregroundMuted, fontSize: 13 },
-    pct: { color: theme.colors.foreground, fontSize: 14, fontWeight: "700" as const },
-    bar: { flexDirection: "row" as const, gap: 2, height: 14 },
-    segment: { flex: 1, borderRadius: 2 },
-    resetRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 5 },
-    when: { color: theme.colors.foreground, fontSize: 12, fontWeight: "500" as const },
-    muted: { color: theme.colors.foregroundMuted, fontSize: 12 },
-    eye: { padding: 4 },
+    windowLabel: { color: theme.colors.foregroundMuted, fontSize: 12 },
+    pctLabel: { color: theme.colors.foregroundMuted, fontSize: 12 },
+    pct: { color: theme.colors.foreground, fontSize: 12, fontWeight: "700" as const },
+    bar: { flexDirection: "row" as const, gap: 1.5, height: 10 },
+    segment: { flex: 1, borderRadius: 1.5 },
+    resetRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
+    when: { color: theme.colors.foreground, fontSize: 11, fontWeight: "500" as const },
+    muted: { color: theme.colors.foregroundMuted, fontSize: 11 },
+    eye: { padding: 2 },
   };
 }
 
@@ -116,7 +110,7 @@ function WindowRow({
           {left != null ? (
             <Text style={styles.pctLabel}>
               {t("remainingLabel")}
-              <Text style={styles.pct}>{`  ${Math.round(left)}%`}</Text>
+              <Text style={styles.pct}>{` ${Math.round(left)}%`}</Text>
             </Text>
           ) : null}
         </View>
@@ -124,7 +118,7 @@ function WindowRow({
           <SegmentBar pct={left} color={remainingColor(theme, left)} styles={styles} />
         ) : null}
         <View style={styles.resetRow}>
-          <Icon name="History" size={13} color={theme.colors.foregroundMuted} />
+          <Icon name="History" size={11} color={theme.colors.foregroundMuted} />
           {resetsAt ? (
             <Text style={styles.muted}>
               <Text style={styles.when}>{t("resetsAt", { when: formatWhen(resetsAt, now, locale, t) })}</Text>
@@ -145,7 +139,7 @@ function WindowRow({
         >
           <Icon
             name={hidden ? "EyeOff" : "Eye"}
-            size={18}
+            size={15}
             color={hidden ? theme.colors.foregroundMuted : theme.colors.foreground}
           />
         </Pressable>
@@ -174,7 +168,7 @@ function ProviderSection({
   return (
     <View style={styles.provider}>
       <View style={styles.providerHeader}>
-        {svg ? <Icon icon={{ svg }} size={22} color={theme.colors.foreground} /> : null}
+        {svg ? <Icon icon={{ svg }} size={16} color={theme.colors.foreground} /> : null}
         <Text style={styles.providerName} numberOfLines={1}>
           {provider.displayName}
         </Text>
