@@ -7,7 +7,7 @@
 | Plugin | What it does | Install |
 |---|---|---|
 | [`turn-speed`](turn-speed/OVERVIEW.md) | After each Claude Code or Codex turn, shows generation speed at the end of the turn (tok/s, output tokens, generation time, request count). Parses the CLI's own session logs locally on the daemon machine and keeps only timestamps and token counts | In the plugin registry: `paseo plugin add 52216108/turn-speed` |
-| [`usage-reset`](usage-reset/OVERVIEW.md) | Adds one row per account to the bottom of the sidebar showing how much of each Claude / Codex 5-hour and weekly limit is left, colored by headroom; clicking it lists the exact reset time of each (for example "Tue 10/27 21:00, in 2d 8h"). Only reads the usage report Paseo already fetches | In the plugin registry: `paseo plugin add 52216108/usage-reset` |
+| [`usage-reset`](usage-reset/OVERVIEW.md) | Adds one row per account to the bottom of the sidebar showing how much of each Claude / Codex 5-hour and weekly limit is left, colored when you are using it up fast; clicking it lists the exact reset time of each (for example "Tue 10/27 21:00, in 2d 8h"). Only reads the usage report Paseo already fetches | In the plugin registry: `paseo plugin add 52216108/usage-reset` |
 | [`next-input`](next-input/OVERVIEW.md) | Predicts one editable next message on demand when a conversation is opened, using a selectable model through the existing Claude account. Shows it at the end of the reply; tap the paper plane to send it or the text to edit it. | In the plugin registry: `paseo plugin add 52216108/next-input` |
 
 Plugins are installed per daemon, once on each machine; turn on Settings → Plugins → Enable plugins first.
