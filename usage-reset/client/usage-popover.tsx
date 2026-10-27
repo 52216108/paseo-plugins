@@ -7,8 +7,8 @@ import { formatClock, formatRemaining, formatWhen, localizeLabel, roundToMinute 
 import { messages, type Translate } from "./messages";
 import { PROVIDER_ICONS } from "./provider-icons";
 import {
-  barColor,
   providerKind,
+  remainingColor,
   remainingPct,
   useHiddenWindows,
   useNow,
@@ -17,11 +17,11 @@ import {
   type UsageWindow,
 } from "./usage-data";
 
-const SEGMENTS = 40;
+const SEGMENTS = 30;
 
 function makeStyles(theme: PluginTheme, compact: boolean) {
   return {
-    root: { padding: compact ? 16 : 14, gap: 12, minWidth: 340 },
+    root: { padding: compact ? 16 : 14, gap: 12, minWidth: 280, maxWidth: 320 },
     header: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
     title: { color: theme.colors.foreground, fontSize: 15, fontWeight: "600" as const, flex: 1 },
     button: {
@@ -33,8 +33,8 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     },
     buttonText: { color: theme.colors.foreground, fontSize: 12 },
     card: {
-      padding: 14,
-      gap: 14,
+      padding: 12,
+      gap: 12,
       borderRadius: 12,
       borderWidth: 1,
       borderColor: theme.colors.border,
@@ -56,13 +56,13 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
       fontWeight: "600" as const,
       letterSpacing: 1,
     },
-    window: { flexDirection: "row" as const, alignItems: "center" as const, gap: 12 },
+    window: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
     windowBody: { flex: 1, gap: 5 },
     windowTop: { flexDirection: "row" as const, justifyContent: "space-between" as const, gap: 8 },
     windowLabel: { color: theme.colors.foregroundMuted, fontSize: 13 },
     pctLabel: { color: theme.colors.foregroundMuted, fontSize: 13 },
     pct: { color: theme.colors.foreground, fontSize: 14, fontWeight: "700" as const },
-    bar: { flexDirection: "row" as const, gap: 2, height: 16 },
+    bar: { flexDirection: "row" as const, gap: 2, height: 14 },
     segment: { flex: 1, borderRadius: 2 },
     resetRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 5 },
     when: { color: theme.colors.foreground, fontSize: 12, fontWeight: "500" as const },
@@ -89,7 +89,6 @@ function SegmentBar({ pct, color, styles }: { pct: number; color: string; styles
 }
 
 function WindowRow({
-  provider,
   limit,
   hidden,
   onToggle,
@@ -98,7 +97,6 @@ function WindowRow({
   theme,
   styles,
 }: {
-  provider: ProviderUsage;
   limit: UsageWindow;
   hidden: boolean;
   onToggle: () => void;
@@ -123,7 +121,7 @@ function WindowRow({
           ) : null}
         </View>
         {left != null ? (
-          <SegmentBar pct={left} color={barColor(theme, provider.providerId, limit.tone)} styles={styles} />
+          <SegmentBar pct={left} color={remainingColor(theme, left)} styles={styles} />
         ) : null}
         <View style={styles.resetRow}>
           <Icon name="History" size={13} color={theme.colors.foregroundMuted} />
@@ -192,7 +190,6 @@ function ProviderSection({
         provider.windows.map((limit) => (
           <WindowRow
             key={limit.id}
-            provider={provider}
             limit={limit}
             hidden={isHidden(provider.providerId, limit.id)}
             onToggle={() => toggle(provider.providerId, limit.id)}

@@ -98,14 +98,6 @@ export function remainingPct(limit: UsageWindow): number | null {
   return null;
 }
 
-// 跟 daemon 给的 tone 走：充足绿、接近上限黄、见底红
-export function toneColor(theme: PluginTheme, tone: UsageWindow["tone"]): string {
-  if (tone === "danger") return theme.colors.statusDanger;
-  if (tone === "warning") return theme.colors.statusWarning;
-  if (tone === "ok") return theme.colors.statusSuccess;
-  return theme.colors.foregroundMuted;
-}
-
 // 提供方 id 形如 "claude" 或 "claude:<账户>"，取冒号前的部分对应图标
 export function providerKind(providerId: string): string {
   return providerId.split(":")[0];
@@ -132,14 +124,11 @@ export function useHiddenWindows() {
   return { isHidden, toggle, ready: settings.status === "ready" };
 }
 
-// 进度条用各家品牌色；接近上限、见底时改用主题的黄、红提醒
-const BRAND_COLORS: Record<string, string> = {
-  claude: "#D97757",
-  codex: "#3B8EF0",
-};
-
-export function barColor(theme: PluginTheme, providerId: string, tone: UsageWindow["tone"]): string {
-  if (tone === "danger") return theme.colors.statusDanger;
-  if (tone === "warning") return theme.colors.statusWarning;
-  return BRAND_COLORS[providerKind(providerId)] ?? theme.colors.accent;
+// 按剩余额度分档上色，各家用同一套：充足蓝、过半绿、偏少橙、见底红
+export function remainingColor(theme: PluginTheme, pct: number | null): string {
+  if (pct == null) return theme.colors.foregroundMuted;
+  if (pct >= 70) return "#3B82F6";
+  if (pct >= 40) return theme.colors.statusSuccess;
+  if (pct >= 20) return "#F59E0B";
+  return theme.colors.statusDanger;
 }
