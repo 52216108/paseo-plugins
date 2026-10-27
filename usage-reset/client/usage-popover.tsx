@@ -31,7 +31,10 @@ function splitDisplayName(displayName: string): { name: string; account: string 
 
 function makeStyles(theme: PluginTheme, compact: boolean) {
   return {
-    root: { padding: compact ? 14 : 10, gap: 10, minWidth: 240, maxWidth: 290 },
+    // 桌面是浮层，限制宽度；手机上是整页面板，铺满
+    root: compact
+      ? { padding: 16, gap: 12, width: "100%" as const }
+      : { padding: 10, gap: 10, minWidth: 240, maxWidth: 290 },
     header: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
     title: { color: theme.colors.foreground, fontSize: 14, fontWeight: "600" as const, flex: 1 },
     button: {
