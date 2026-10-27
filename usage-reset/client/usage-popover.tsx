@@ -8,7 +8,7 @@ import { messages, type Translate } from "./messages";
 import { PROVIDER_ICONS } from "./provider-icons";
 import {
   providerKind,
-  BAR_COLOR,
+  barColor,
   budgetColor,
   windowBudget,
   remainingPct,
@@ -132,7 +132,7 @@ function WindowRow({
             </Text>
           ) : null}
         </View>
-        {left != null ? <SegmentBar pct={left} color={BAR_COLOR} styles={styles} /> : null}
+        {left != null ? <SegmentBar pct={left} color={barColor(left)} styles={styles} /> : null}
         <View style={styles.resetRow}>
           <Icon name="History" size={11} color={theme.colors.foregroundMuted} />
           {resetsAt ? (

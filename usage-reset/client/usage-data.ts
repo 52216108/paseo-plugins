@@ -124,8 +124,14 @@ export function useHiddenWindows() {
   return { isHidden, toggle, ready: settings.status === "ready" };
 }
 
-// 进度条只表示剩余多少，统一一种颜色；预算紧不紧由「日均可用」单独表示
-export const BAR_COLOR = "#4A9DF8";
+// 进度条像油量表，只按剩余比例上色：平时蓝色，剩不到 30% 橙、不到 10% 红。
+// 用得快不快由「日均可用」单独表示，两者不混；进度条不用绿色，免得跟日均可用的绿色混淆。
+// 用固定的明亮色，不取主题的状态色：有的主题状态色偏暗，铺满一整条进度条显得发闷
+export function barColor(pct: number): string {
+  if (pct < 10) return "#FF5A50";
+  if (pct < 30) return "#FF9F0A";
+  return "#4A9DF8";
+}
 
 // 日均可用 = 剩余额度 ÷ 离刷新还有几份时间（周、月按天，5 小时按小时），跟平均分的标准额度比：
 // 周限额每天约 14%，5 小时每小时 20%，月限额每天约 3.3%。
