@@ -1,0 +1,14 @@
+{
+  "id": "agent-taskboard",
+  "name": "Board",
+  "description": "Open the local agent-taskboard board from the Paseo sidebar",
+  "translations": {
+    "zh-CN": {
+      "name": "看板",
+      "description": "在侧边栏打开本机 agent-taskboard 看板"
+    }
+  },
+  "requirements": {
+    "paseo": ">=0.13.0"
+  }
+}
