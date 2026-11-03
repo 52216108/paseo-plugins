@@ -3,13 +3,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Predictions } from "../server/predictions.ts";
 import { validModelId } from "../shared/model.ts";
-import { claudeCandidates, codexCandidates, findClaude, findCodex } from "../server/claude.ts";
-import { pickEngine } from "../server/engine.ts";
+import { claudeCandidates, findClaude } from "../server/claude.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseSuggestion, selectContext } from "../server/context.ts";
 import { Turns } from "../server/turns.ts";
-import { claudeArgs, codexArgs, generate, generateWithCodex } from "../server/generate.ts";
+import { claudeArgs, generate } from "../server/generate.ts";
 import { sendOnce } from "../server/send.ts";
 import { requiresEditing } from "../shared/safety.ts";
 import { Drafts } from "../client/drafts.ts";
@@ -222,50 +221,4 @@ test("服务端拒绝危险原文直发且不消耗 token，修改后允许发�
   await sendOnce(rows, consumed, "agent", "one", "解释为什么不应该强制推送", async () => { calls++; });
   assert.equal(calls, 1);
   assert.equal(rows.size, 0);
-});
-
-test("跟随会话：Codex 会话用 Codex，其他用 Claude，首选缺失时换另一个；手动指定缺失时不预测", () => {
-  const both = { claude: true, codex: true };
-  assert.equal(pickEngine("auto", "codex", both), "codex");
-  assert.equal(pickEngine("auto", "claude", both), "claude");
-  assert.equal(pickEngine("auto", "opencode", both), "claude");
-  assert.equal(pickEngine("auto", "codex", { claude: true, codex: false }), "claude");
-  assert.equal(pickEngine("auto", "claude", { claude: false, codex: true }), "codex");
-  assert.equal(pickEngine("auto", "claude", { claude: false, codex: false }), null);
-  assert.equal(pickEngine("codex", "claude", both), "codex");
-  assert.equal(pickEngine("codex", "codex", { claude: true, codex: false }), null);
-  assert.equal(pickEngine("claude", "codex", { claude: false, codex: true }), null);
-});
-
-test("Codex 预测只读沙盒、不加载 MCP、低推理强度，结果写到指定文件，上下文走 stdin", () => {
-  const args = codexArgs("/tmp/out.txt");
-  assert.equal(args[0], "exec");
-  for (const flag of ["--skip-git-repo-check", "--output-last-message", "mcp_servers={}", 'model_reasoning_effort="low"'])
-    assert.ok(args.includes(flag), flag);
-  assert.deepEqual(args.slice(args.indexOf("--sandbox"), args.indexOf("--sandbox") + 2), ["--sandbox", "read-only"]);
-  assert.equal(args.at(-1), "-");
-  assert.ok(!args.includes("--model"));
-  assert.deepEqual(codexArgs("/tmp/out.txt", "gpt-5-mini").slice(-3), ["--model", "gpt-5-mini", "-"]);
-  assert.throws(() => codexArgs("/tmp/out.txt", "--dangerous"), /Invalid model ID/);
-});
-
-test("Codex 读取最后一条回复作为建议；进程失败不产生建议", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "next-input-codex-"));
-  try {
-    const ok = join(dir, "codex-ok");
-    // 假 Codex：把固定 JSON 写进 --output-last-message 指定的文件。
-    await writeFile(ok, `#!/bin/sh\nwhile [ "$1" != "--output-last-message" ]; do shift; done\ncat > /dev/null\nprintf '{"suggestion":"再跑一遍测试"}' > "$2"\n`, { mode: 0o755 });
-    assert.equal(await generateWithCodex([{ role: "user", text: "改好了吗" }], new AbortController().signal, ok), "再跑一遍测试");
-    const bad = join(dir, "codex-bad");
-    await writeFile(bad, "#!/bin/sh\ncat > /dev/null\nexit 1\n", { mode: 0o755 });
-    await assert.rejects(generateWithCodex([{ role: "user", text: "x" }], new AbortController().signal, bad), /Codex/);
-  } finally { await rm(dir, { recursive: true, force: true }); }
-});
-
-test("codex 按 PATH、用户目录、Homebrew 顺序查找", async () => {
-  const list = codexCandidates("/a/bin:relative", "/home/u");
-  assert.equal(list[0], "/a/bin/codex");
-  assert.ok(!list.some(p => p.startsWith("relative")));
-  assert.ok(list.includes("/home/u/.local/bin/codex") && list.includes("/opt/homebrew/bin/codex"));
-  assert.deepEqual(await findCodex(["/definitely/missing/codex"]), { path: null, searched: ["/definitely/missing/codex"] });
 });

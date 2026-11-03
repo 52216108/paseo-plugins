@@ -11,18 +11,7 @@ export function claudeCandidates(path = process.env.PATH ?? "", home = homedir()
   ])];
 }
 
-export function codexCandidates(path = process.env.PATH ?? "", home = homedir()): string[] {
-  return [...new Set([
-    ...path.split(delimiter).filter(isAbsolute).map(dir => resolve(dir, "codex")),
-    join(home, ".local/bin/codex"), join(home, ".npm-global/bin/codex"), join(home, ".bun/bin/codex"),
-    "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
-  ])];
-}
-
-export const findCodex = (candidates = codexCandidates()) => findExecutable(candidates);
-export const findClaude = (candidates = claudeCandidates()) => findExecutable(candidates);
-
-async function findExecutable(candidates: string[]): Promise<{ path: string | null; searched: string[] }> {
+export async function findClaude(candidates = claudeCandidates()): Promise<{ path: string | null; searched: string[] }> {
   const searched: string[] = [];
   for (const path of candidates) {
     searched.push(path);
