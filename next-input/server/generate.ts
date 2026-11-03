@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { readFile, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { validModelId } from "../shared/model.ts";
 import type { Message } from "./context.ts";
 import { parseSuggestion } from "./context.ts";
@@ -39,5 +42,35 @@ export function generate(messages: Message[], signal: AbortSignal, cli: string, 
     });
     child.stdin?.on("error", () => {});
     child.stdin?.end(JSON.stringify({ conversation: messages }));
+  });
+}
+
+// Codex 没有单独的系统提示参数，说明和对话一起经 stdin 传入；只读沙盒、不加载 MCP、低推理强度。
+export function codexArgs(outputFile: string, model = ""): string[] {
+  if (model && !validModelId(model)) throw new Error("Invalid model ID");
+  return ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never",
+    "-c", "mcp_servers={}", "-c", 'model_reasoning_effort="low"',
+    "--output-last-message", outputFile, ...(model ? ["--model", model] : []), "-"];
+}
+
+export function generateWithCodex(messages: Message[], signal: AbortSignal, cli: string, model = ""): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error("预测已取消"));
+    const outputFile = join(tmpdir(), `next-input-${randomUUID()}.txt`);
+    // 沿用本机 Codex 的登录和配置；上下文经 stdin 传入，不放进进程参数。
+    const child = execFile(cli, codexArgs(outputFile, model), {
+      cwd: homedir(), env: process.env, signal, timeout: 45_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
+    }, async error => {
+      try {
+        if (error) throw new Error("预测失败或超时，请检查本机 Codex 登录和连接");
+        resolve(parseSuggestion(await readFile(outputFile, "utf8")));
+      } catch (e) {
+        reject(e instanceof Error && e.message.includes("Codex") ? e : new Error("模型没有返回有效建议"));
+      } finally {
+        await rm(outputFile, { force: true });
+      }
+    });
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(`${instruction}\n\nConversation (JSON):\n${JSON.stringify({ conversation: messages })}`);
   });
 }
