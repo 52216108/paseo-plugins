@@ -425,3 +425,12 @@ test("需要批准按新出现的待批准请求判定（daemon 不为权限请�
   scanAlerts(new Map([[one.id, one]]), "s1", n2, T0, true);
   assert.equal(checkAlert(one, "s1", list, n2, T0), null);
 });
+
+test("需要批准的通知带上对应请求 id，正文取那个请求", () => {
+  const a = toLite({ ...agent({ id: "ag9", title: "迁移" }), pendingPermissions: [{ id: "r1", title: "旧请求" }, { id: "r2", title: "运行 npm test" }] } as unknown as AgentLite);
+  const p = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: a, reason: "permission", requestId: "r2" });
+  assert.equal(p.requestId, "r2");
+  assert.equal(p.aps.alert.body, "运行 npm test");
+  const f = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: a, reason: "finished" });
+  assert.equal("requestId" in f, false);
+});

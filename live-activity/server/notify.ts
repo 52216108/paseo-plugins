@@ -8,7 +8,8 @@ const REASONS = new Set<string>(["finished", "error", "permission"]);
 /** 提醒时间戳离现在超过这么久就不发（重放 / 迟到的事件没有意义）。 */
 export const ALERT_MAX_AGE_MS = 120_000;
 
-export interface AlertEvent { agent: AgentLite; reason: AlertReason; timestamp: string }
+/** requestId：permission 时是这次新出现的待批准请求 id（App 只批准这一个，防止批到用户没看到的请求）。 */
+export interface AlertEvent { agent: AgentLite; reason: AlertReason; timestamp: string; requestId?: string }
 
 /** 数据源按 agentId 记已通知过（或已作为基线见过）的 attentionTimestamp 与待批准请求 id。 */
 export interface Seen { ts: string | null; perms: string[] }
@@ -33,7 +34,7 @@ export function checkAlert(
   if (agent.archivedAt || isNested(agent, serverId, agents)) return null;
   // 第一次见到这个会话（例如新建后立刻就要批准）：之前没有请求，按空集合比较。
   const newPerm = now.perms.find(id => !(prev?.perms ?? []).includes(id));
-  if (newPerm !== undefined) return { agent, reason: "permission", timestamp: `perm:${newPerm}` };
+  if (newPerm !== undefined) return { agent, reason: "permission", timestamp: `perm:${newPerm}`, requestId: newPerm };
   const ts = now.ts;
   if (!agent.requiresAttention || !ts || ts === (prev?.ts ?? undefined)) return null;
   const reason = agent.attentionReason;
@@ -71,6 +72,8 @@ export interface AlertPayload {
   serverId: string;
   agentId: string;
   reason: AlertReason;
+  /** 仅 permission：通知对应的待批准请求 id。 */
+  requestId?: string;
 }
 
 const nonEmpty = (v: string | null | undefined): string | null => (v && v.trim() ? v : null);
@@ -79,13 +82,14 @@ const nonEmpty = (v: string | null | undefined): string | null => (v && v.trim()
 export function buildAlertPayload(input: {
   serverId: string; hostLabel: string; agent: AgentLite; reason: AlertReason;
   workspaces?: ReadonlyMap<string, WorkspaceInfo>;
+  requestId?: string;
 }): AlertPayload {
   const { serverId, agent, reason } = input;
   const name = nonEmpty(agent.title) ?? "会话";
   let title: string, body: string;
   if (reason === "permission") {
     title = `需要你批准 · ${name}`;
-    const first = agent.pendingPermissions[0];
+    const first = agent.pendingPermissions.find(p => input.requestId !== undefined && p.id === input.requestId) ?? agent.pendingPermissions[0];
     body = nonEmpty(first?.title) ?? nonEmpty(first?.name) ?? "有一个权限请求等你处理";
   } else if (reason === "error") {
     title = `出错了 · ${name}`;
@@ -107,6 +111,7 @@ export function buildAlertPayload(input: {
     serverId,
     agentId: agent.id,
     reason,
+    ...(reason === "permission" && input.requestId && !input.requestId.startsWith("#") ? { requestId: input.requestId } : {}),
   };
 }
 

@@ -169,7 +169,7 @@ export class LiveActivity {
         this.warnedUnconfigured.add(device.environment);
         continue;
       }
-      const payload = buildAlertPayload({ serverId, hostLabel, agent: event.agent, reason: event.reason, workspaces });
+      const payload = buildAlertPayload({ serverId, hostLabel, agent: event.agent, reason: event.reason, workspaces, requestId: event.requestId });
       const result = await this.apns.send(device.environment, token, device.bundleId, 10, payload, {
         pushType: "alert", collapseId: event.agent.id,
       });
