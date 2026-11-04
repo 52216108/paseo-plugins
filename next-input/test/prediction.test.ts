@@ -249,6 +249,9 @@ test("Codex 预测只读沙盒、不加载 MCP、低推理强度，结果写到�
   assert.ok(!args.includes("--model"));
   assert.deepEqual(codexArgs("/tmp/out.txt", "gpt-5-mini").slice(-3), ["--model", "gpt-5-mini", "-"]);
   assert.throws(() => codexArgs("/tmp/out.txt", "--dangerous"), /Invalid model ID/);
+  assert.ok(!args.includes('service_tier="fast"'));
+  const fast = codexArgs("/tmp/out.txt", "", true);
+  assert.deepEqual(fast.slice(fast.indexOf('service_tier="fast"') - 1, fast.indexOf('service_tier="fast"') + 1), ["-c", 'service_tier="fast"']);
 });
 
 test("Codex 读取最后一条回复作为建议；进程失败不产生建议", async () => {

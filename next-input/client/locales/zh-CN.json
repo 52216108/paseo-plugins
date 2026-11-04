@@ -36,6 +36,8 @@
   "engineAuto": "跟随会话",
   "codexModel": "Codex 模型",
   "codexModelHint": "留空使用 Codex 的默认模型（推理强度固定为 low）。规则同上。",
+  "codexFast": "Codex Fast 模式",
+  "codexFastHint": "用 Codex 的 Fast 档位预测：出建议更快，用量消耗更多。",
   "codexFound": "已找到 Codex CLI",
   "codexMissing": "未找到 Codex CLI，已查找以下位置："
 }

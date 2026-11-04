@@ -14,6 +14,8 @@ export const preferences = defineSettings({
     customModel: z.string().default(""),
     // Empty: Codex's own default model.
     codexModel: z.string().default(""),
+    // Codex's fast service tier: faster replies, more usage.
+    codexFast: z.boolean().default(false),
   }).refine(value => (value.customModel === "" && value.model !== "custom") || validModelId(value.customModel),
     { message: "Invalid model ID", path: ["customModel"] })
     .refine(value => value.codexModel === "" || validModelId(value.codexModel),

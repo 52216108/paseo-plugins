@@ -47,10 +47,10 @@ export function generate(messages: Message[], signal: AbortSignal, cli: string, 
 
 // Codex 没有单独的系统提示参数，说明和对话一起经 stdin 传入；只读沙盒、低推理强度。
 // 工具和 MCP 由隔离的 CODEX_HOME 关掉（codex-home.ts），mcp_servers={} 只是多一层保险。
-export function codexArgs(outputFile: string, model = ""): string[] {
+export function codexArgs(outputFile: string, model = "", fast = false): string[] {
   if (model && !validModelId(model)) throw new Error("Invalid model ID");
   return ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never",
-    "-c", "mcp_servers={}", "-c", 'model_reasoning_effort="low"',
+    "-c", "mcp_servers={}", "-c", 'model_reasoning_effort="low"', ...(fast ? ["-c", 'service_tier="fast"'] : []),
     "--output-last-message", outputFile, ...(model ? ["--model", model] : []), "-"];
 }
 
@@ -58,15 +58,16 @@ export function codexArgs(outputFile: string, model = ""): string[] {
 let codexQueue: Promise<unknown> = Promise.resolve();
 
 export function generateWithCodex(messages: Message[], signal: AbortSignal, cli: string, model = "",
-  source = sourceCodexHome()): Promise<string> {
-  const run = codexQueue.catch(() => {}).then(() => runCodex(messages, signal, cli, model, source));
+  source = sourceCodexHome(), fast = false): Promise<string> {
+  const run = codexQueue.catch(() => {}).then(() => runCodex(messages, signal, cli, model, source, fast));
   // A run that never settles (a helper process keeping Codex's pipes open) must not block every later prediction:
   // the queue moves on after a hard limit above Codex's own 45 s timeout.
   codexQueue = Promise.race([run.catch(() => {}), new Promise(resolve => setTimeout(resolve, 60_000).unref())]);
   return run;
 }
 
-async function runCodex(messages: Message[], signal: AbortSignal, cli: string, model: string, source: string): Promise<string> {
+async function runCodex(messages: Message[], signal: AbortSignal, cli: string, model: string, source: string,
+  fast: boolean): Promise<string> {
   if (signal.aborted) throw new Error("预测已取消");
   // 隔离的 CODEX_HOME：只带登录凭据和关掉全部工具的配置，在空目录里运行（不读 AGENTS.md），结束后删除。
   const isolated = await isolatedCodexHome(source);
@@ -74,7 +75,7 @@ async function runCodex(messages: Message[], signal: AbortSignal, cli: string, m
   try {
     await new Promise<void>((resolve, reject) => {
       // 上下文经 stdin 传入，不放进进程参数。
-      const child = execFile(cli, codexArgs(outputFile, model), {
+      const child = execFile(cli, codexArgs(outputFile, model, fast), {
         cwd: isolated.work, env: { ...process.env, CODEX_HOME: isolated.home },
         signal, timeout: 45_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
       }, error => error ? reject(new Error("预测失败或超时，请检查本机 Codex 登录和连接")) : resolve());

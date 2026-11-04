@@ -83,7 +83,8 @@ export default function contribute(server: PluginServerContext) {
         const context = selectContext(entries, turn!.id);
         if (!context.length) return { status: "empty", text: "" };
         const text = engine === "codex"
-          ? await generateWithCodex(context, turn!.controller.signal, cli.path, config.values.codexModel)
+          ? await generateWithCodex(context, turn!.controller.signal, cli.path, config.values.codexModel, undefined,
+            config.values.codexFast)
           : await generate(context, turn!.controller.signal, cli.path,
             config.values.model === "custom" ? config.values.customModel : config.values.model);
         if (!current()) return expired;

@@ -40,6 +40,8 @@ export function PredictionSettings({ theme }: PluginSurfaceProps) {
       onChangeText={setCustom} hint={t("modelHint")} error={(custom === "" && model !== "custom") || validModelId(custom) ? null : t("invalidModel")} />
     <SettingsInput key={`codex-${revision}`} label={t("codexModel")} initialValue={settings.values.codexModel}
       onChangeText={setCodexModel} hint={t("codexModelHint")} error={codexModel === "" || validModelId(codexModel) ? null : t("invalidModel")} />
+    <SettingsSwitch label={t("codexFast")} value={settings.values.codexFast} hint={t("codexFastHint")}
+      onValueChange={codexFast => { void settings.save({ ...settings.values, codexFast }, settings.revision); }} />
     <SettingsAction label={t("model")} actionLabel={t("saveModel")} disabled={!valid}
       onPress={() => { void settings.save({ ...settings.values, model, customModel: custom, codexModel }, settings.revision); }} />
     {cliError ? <Text style={muted}>{t("cliError")}</Text> : cli ? <>

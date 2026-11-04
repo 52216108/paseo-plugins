@@ -36,6 +36,8 @@
   "engineAuto": "Follow session",
   "codexModel": "Codex model",
   "codexModelHint": "Leave empty for Codex's default model (reasoning effort is fixed to low). Same rules as above.",
+  "codexFast": "Codex Fast mode",
+  "codexFastHint": "Predict on Codex's fast tier: quicker suggestions, more usage.",
   "codexFound": "Codex CLI found",
   "codexMissing": "Codex CLI not found. Searched:"
 }
