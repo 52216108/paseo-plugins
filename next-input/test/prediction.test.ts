@@ -382,8 +382,14 @@ test("清掉崩溃后残留的旧隔离目录，不碰新的和别人的目录",
     for (const d of [stale, fresh, other]) await mkdir(d);
     const old = new Date(Date.now() - 60 * 60_000);
     await utimes(stale, old, old); await utimes(other, old, old);
-    await sweepStaleHomes(dir);
+    // 同前缀的符号链接（共享 /tmp 上别人放的）：不跟随、不删除。
+    const victim = join(dir, "victim"); await mkdir(victim); await writeFile(join(victim, "keep"), "x");
+    const planted = join(dir, "next-input-codex-planted"); await symlink(victim, planted);
+    await sweepStaleHomes(dir, 0, Date.now() + 60_000);
     await assert.rejects(access(stale));
+    await access(join(victim, "keep")); await access(planted);
+    await rm(planted); await mkdir(fresh, { recursive: true });
+    await sweepStaleHomes(dir);
     await access(fresh); await access(other);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
