@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Predictions } from "../server/predictions.ts";
@@ -10,6 +10,8 @@ import assert from "node:assert/strict";
 import { parseSuggestion, selectContext } from "../server/context.ts";
 import { Turns } from "../server/turns.ts";
 import { claudeArgs, codexArgs, generate, generateWithCodex } from "../server/generate.ts";
+import { isolatedCodexHome, sourceCodexHome, writeBackRefreshedAuth } from "../server/codex-home.ts";
+import { access, readFile } from "node:fs/promises";
 import { sendOnce } from "../server/send.ts";
 import { requiresEditing } from "../shared/safety.ts";
 import { Drafts } from "../client/drafts.ts";
@@ -252,13 +254,72 @@ test("Codex 预测只读沙盒、不加载 MCP、低推理强度，结果写到�
 test("Codex 读取最后一条回复作为建议；进程失败不产生建议", async () => {
   const dir = await mkdtemp(join(tmpdir(), "next-input-codex-"));
   try {
+    const source = join(dir, "user-codex-home");
+    await mkdir(source);
+    await writeFile(join(source, "auth.json"), '{"tokens":"t1"}');
+    await writeFile(join(source, "config.toml"), '[mcp_servers.secret]\ncommand = "secret"\n');
     const ok = join(dir, "codex-ok");
-    // 假 Codex：把固定 JSON 写进 --output-last-message 指定的文件。
-    await writeFile(ok, `#!/bin/sh\nwhile [ "$1" != "--output-last-message" ]; do shift; done\ncat > /dev/null\nprintf '{"suggestion":"再跑一遍测试"}' > "$2"\n`, { mode: 0o755 });
-    assert.equal(await generateWithCodex([{ role: "user", text: "改好了吗" }], new AbortController().signal, ok), "再跑一遍测试");
+    // 假 Codex：只有在隔离的 CODEX_HOME（关了命令执行、没有用户的 MCP、带着登录凭据）里才返回建议。
+    await writeFile(ok, `#!/bin/sh
+grep -q 'shell_tool = false' "$CODEX_HOME/config.toml" || exit 3
+grep -q 'secret' "$CODEX_HOME/config.toml" && exit 4
+grep -q 't1' "$CODEX_HOME/auth.json" || exit 5
+[ "$CODEX_HOME" != "${source}" ] || exit 6
+while [ "$1" != "--output-last-message" ]; do shift; done
+cat > /dev/null
+printf '{"suggestion":"再跑一遍测试"}' > "$2"
+`, { mode: 0o755 });
+    assert.equal(await generateWithCodex([{ role: "user", text: "改好了吗" }], new AbortController().signal, ok, "", source), "再跑一遍测试");
     const bad = join(dir, "codex-bad");
     await writeFile(bad, "#!/bin/sh\ncat > /dev/null\nexit 1\n", { mode: 0o755 });
-    await assert.rejects(generateWithCodex([{ role: "user", text: "x" }], new AbortController().signal, bad), /Codex/);
+    await assert.rejects(generateWithCodex([{ role: "user", text: "x" }], new AbortController().signal, bad, "", source), /Codex/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("隔离的 CODEX_HOME：关掉工具、只带登录凭据、结束后删除", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "next-input-home-"));
+  try {
+    const source = join(dir, "user");
+    await mkdir(source);
+    await writeFile(join(source, "auth.json"), '{"tokens":"t1"}');
+    await writeFile(join(source, "config.toml"), '[mcp_servers.x]\ncommand = "x"\n');
+    await writeFile(join(source, "AGENTS.md"), "private");
+    const isolated = await isolatedCodexHome(source);
+    const config = await readFile(join(isolated.home, "config.toml"), "utf8");
+    for (const off of ["shell_tool = false", "unified_exec = false", "code_mode_host = false", "view_image = false",
+      "apps = false", "plugins = false", "computer_use = false", "browser_use = false", "hooks = false", 'web_search = "disabled"'])
+      assert.ok(config.includes(off), off);
+    assert.ok(!config.includes("mcp_servers"));
+    assert.equal(await readFile(join(isolated.home, "auth.json"), "utf8"), '{"tokens":"t1"}');
+    await assert.rejects(access(join(isolated.home, "AGENTS.md")));
+    await isolated.finish();
+    await assert.rejects(access(isolated.root));
+    // 没有 auth.json（API key 登录）也能建。
+    const empty = await isolatedCodexHome(join(dir, "missing"));
+    await assert.rejects(access(join(empty.home, "auth.json")));
+    await empty.finish();
+    assert.equal(sourceCodexHome({ CODEX_HOME: "/x" }, "/home/u"), "/x");
+    assert.equal(sourceCodexHome({}, "/home/u"), "/home/u/.codex");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("刷新过的登录凭据写回用户目录，但不覆盖期间被别人改过的文件", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "next-input-auth-"));
+  try {
+    const real = join(dir, "auth.json");
+    const used = join(dir, "used.json");
+    const original = Buffer.from("old");
+    // 没刷新：不动。
+    await writeFile(real, original); await writeFile(used, original);
+    assert.equal(await writeBackRefreshedAuth(real, original, used), false);
+    // 刷新了、用户文件没变：写回。
+    await writeFile(used, "new");
+    assert.equal(await writeBackRefreshedAuth(real, original, used), true);
+    assert.equal(await readFile(real, "utf8"), "new");
+    // 刷新了、但用户自己的 Codex 期间也刷新了：保留用户的。
+    await writeFile(real, "theirs");
+    assert.equal(await writeBackRefreshedAuth(real, original, used), false);
+    assert.equal(await readFile(real, "utf8"), "theirs");
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
