@@ -1,6 +1,6 @@
 // 各机器会话数据源：本机与已关联机器（connected hosts）都先尝试订阅，订阅失败或中断就降级为每 30 秒轮询。
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
-import { toLite, type AgentLite, type HostData, type HostRef } from "./summary.ts";
+import { toLite, type AgentLite, type HostData, type HostRef, type WorkspaceInfo } from "./summary.ts";
 
 export type Api = PluginHandlerContext["paseo"];
 type ListResult = Awaited<ReturnType<Api["agents"]["list"]>>;
@@ -34,8 +34,8 @@ interface SourceOptions {
 /** 一台机器的会话列表。agents 为 null 表示当前拿不到数据（离线）。 */
 export class AgentSource {
   agents: Map<string, AgentLite> | null = null;
-  /** 工作区 ID → 显示名；拉不到就保持旧的（只影响行里的项目名）。 */
-  workspaces = new Map<string, string>();
+  /** 工作区 ID → 项目名与标题；拉不到就保持旧的（只影响行名）。 */
+  workspaces = new Map<string, WorkspaceInfo>();
   private workspacesAt = 0;
   private workspacesLoading = false;
   private api: Api | null = null;
@@ -155,21 +155,23 @@ export class AgentSource {
     this.workspacesLoading = true;
     this.workspacesAt = Date.now();
     try {
-      const next = new Map<string, string>();
+      const next = new Map<string, WorkspaceInfo>();
       let cursor: string | undefined;
       for (let i = 0; i < MAX_PAGES; i++) {
         const page = await withTimeout(
           api.workspaces.list({ filter: { includeBackground: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } }),
           CONNECT_TIMEOUT_MS, "拉取工作区列表");
-        for (const entry of page.entries as unknown as { id?: string; projectDisplayName?: string; workspace?: { id?: string; projectDisplayName?: string } }[]) {
+        type Desc = { id?: string; projectDisplayName?: string; title?: string | null };
+        for (const entry of page.entries as unknown as (Desc & { workspace?: Desc })[]) {
           const w = entry.workspace ?? entry;
-          if (w.id && w.projectDisplayName) next.set(w.id, w.projectDisplayName);
+          if (w.id) next.set(w.id, { project: w.projectDisplayName ?? "", title: w.title ?? null });
         }
         cursor = page.pageInfo?.nextCursor ?? undefined;
         if (!page.pageInfo?.hasMore || !cursor) break;
       }
       if (this.closed) return;
-      const changed = next.size !== this.workspaces.size || [...next].some(([k, v]) => this.workspaces.get(k) !== v);
+      const changed = next.size !== this.workspaces.size
+        || [...next].some(([k, v]) => this.workspaces.get(k)?.project !== v.project || this.workspaces.get(k)?.title !== v.title);
       this.workspaces = next;
       if (changed) this.opts.onChange();
     } catch (error) {

@@ -238,10 +238,31 @@ test("行里带工作区名：优先工作区显示名，没有就用目录名",
   const a = agent({ status: "running", workspaceId: "w1", cwd: "/Users/x/projects/foo" });
   const b = agent({ status: "running", workspaceId: "w-unknown", cwd: "/Users/x/projects/bar/" });
   const c = agent({ status: "running" });
-  const h: HostData = { host: { serverId: "s1", label: "Mac" }, agents: new Map([a, b, c].map(x => [x.id, x])), workspaces: new Map([["w1", "订个包间工作区"]]) };
+  const h: HostData = { host: { serverId: "s1", label: "Mac" }, agents: new Map([a, b, c].map(x => [x.id, x])), workspaces: new Map([["w1", { project: "订个包间工作区", title: null }]]) };
   const rows = buildState([h], T0 / 1000).rows;
   const byId = new Map(rows.map(r => [r.agentId, r]));
   assert.equal(byId.get(a.id)?.project, "订个包间工作区");
   assert.equal(byId.get(b.id)?.project, "bar");
   assert.equal("project" in (byId.get(c.id) ?? {}), false);
+});
+
+test("按工作区合并：一个工作区一行，状态取最紧急的，计数按工作区，行名用工作区标题", () => {
+  const ws = new Map([["w1", { project: "订个包间工作区", title: "检查安卓店小助绘画阴影" }], ["w2", { project: "宴小助工作区", title: null }]]);
+  const run1 = agent({ status: "running", workspaceId: "w1", activeTurn: { turnId: "t1", startedAt: new Date(T0 - 600_000).toISOString() } });
+  const run2 = agent({ status: "running", workspaceId: "w1", activeTurn: { turnId: "t2", startedAt: new Date(T0 - 60_000).toISOString() } });
+  const wait = agent({ status: "running", workspaceId: "w2", pendingPermissions: [{}], title: "迁移数据" });
+  const run3 = agent({ status: "running", workspaceId: "w2" });
+  const h: HostData = { host: { serverId: "s1", label: "Mac" }, agents: new Map([run1, run2, wait, run3].map(x => [x.id, x])), workspaces: ws };
+  const st = buildState([h], T0 / 1000);
+  assert.equal(st.rows.length, 2);
+  assert.equal(st.running, 1);
+  assert.equal(st.waiting, 1);
+  assert.equal(st.rows[0].status, "waiting");
+  assert.equal(st.rows[0].agentId, wait.id);
+  assert.equal(st.rows[0].title, "迁移数据");
+  assert.equal(st.rows[0].project, "宴小助工作区");
+  assert.equal("since" in st.rows[0], false);
+  assert.equal(st.rows[1].title, "检查安卓店小助绘画阴影");
+  assert.equal(st.rows[1].project, "订个包间工作区");
+  assert.equal(st.rows[1].since, (T0 - 600_000) / 1000);
 });

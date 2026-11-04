@@ -22,7 +22,7 @@ export interface ActivityRow {
   agentId: string;
   host: string;
   title: string;
-  /** 工作区（项目）名：工作区的 projectDisplayName，拿不到时用工作目录最后一段。 */
+  /** 项目名（侧栏分组名）：工作区的 projectDisplayName，拿不到时用工作目录最后一段。 */
   project?: string;
   status: "waiting" | "failed" | "running";
   since?: number;
@@ -86,21 +86,26 @@ function seconds(iso: string | null | undefined): number | null {
 export interface HostData {
   host: HostRef;
   agents: ReadonlyMap<string, AgentLite> | null;
-  /** 工作区 ID → 显示名（同 App 侧栏的项目名）。 */
-  workspaces?: ReadonlyMap<string, string>;
+  /** 工作区 ID → 项目名与工作区标题（同 App 侧栏的分组名与行名）。 */
+  workspaces?: ReadonlyMap<string, WorkspaceInfo>;
 }
 
-/** 与 App 的 projectName 同一规则：工作区显示名，否则工作目录最后一段。 */
-export function projectName(agent: AgentLite, workspaces?: ReadonlyMap<string, string>): string | undefined {
-  const name = agent.workspaceId ? workspaces?.get(agent.workspaceId) : undefined;
+export interface WorkspaceInfo { project: string; title: string | null }
+
+/** 与 App 的 projectName 同一规则：工作区的项目显示名，否则工作目录最后一段。 */
+export function projectName(agent: AgentLite, workspaces?: ReadonlyMap<string, WorkspaceInfo>): string | undefined {
+  const name = agent.workspaceId ? workspaces?.get(agent.workspaceId)?.project : undefined;
   if (name?.trim()) return name;
   const last = agent.cwd?.replace(/\/+$/, "").split("/").pop();
   return last ? last : undefined;
 }
 
+/**
+ * 汇总成一份状态，**按工作区合并**（同 App 侧栏：一个工作区一行，状态取其中最紧急的会话：
+ * 等你处理 → 出错 → 运行中；同级取最近活动的，它也是点开的那个会话）。计数也按工作区。
+ */
 export function buildState(hosts: readonly HostData[], nowSec: number): ContentState {
-  const rows: { row: ActivityRow; recent: number }[] = [];
-  let running = 0, waiting = 0, failed = 0;
+  const groups = new Map<string, { row: ActivityRow; recent: number }>();
   const offline: string[] = [];
   for (const { host, agents, workspaces } of hosts) {
     if (!agents) { offline.push(host.label); continue; }
@@ -108,32 +113,38 @@ export function buildState(hosts: readonly HostData[], nowSec: number): ContentS
       if (agent.archivedAt || isNested(agent, host.serverId, agents)) continue;
       const status = classify(agent);
       if (!status) continue;
-      if (status === "waiting") waiting++;
-      else if (status === "failed") failed++;
-      else running++;
-      const row: ActivityRow = {
-        serverId: host.serverId,
-        agentId: agent.id,
-        host: host.label,
-        title: agent.title?.trim() ? agent.title : "新会话",
-        status,
-      };
+      const workspace = agent.workspaceId ? workspaces?.get(agent.workspaceId) : undefined;
+      // 行名同侧栏：工作区标题，没有就用会话标题。
+      const title = workspace?.title?.trim() ? workspace.title : (agent.title?.trim() ? agent.title : "新会话");
+      const row: ActivityRow = { serverId: host.serverId, agentId: agent.id, host: host.label, title, status };
       const project = projectName(agent, workspaces);
       if (project) row.project = project;
-      if (status === "running") {
-        const since = seconds(agent.activeTurn?.startedAt);
-        if (since !== null) row.since = since;
-      }
-      rows.push({ row, recent: seconds(agent.updatedAt) ?? 0 });
+      const since = status === "running" ? seconds(agent.activeTurn?.startedAt) : null;
+      if (since !== null) row.since = since;
+      const recent = seconds(agent.updatedAt) ?? 0;
+      const key = `${host.serverId}/${agent.workspaceId ?? `agent:${agent.id}`}`;
+      const existing = groups.get(key);
+      if (!existing) { groups.set(key, { row, recent }); continue; }
+      // 运行时长取这个工作区里最早开始的回合。
+      const longest = [existing.row.since, row.since].filter((v): v is number => v !== undefined);
+      const more = RANK[row.status] < RANK[existing.row.status]
+        || (RANK[row.status] === RANK[existing.row.status] && recent > existing.recent);
+      const next = more ? row : existing.row;
+      if (next.status === "running" && longest.length) next.since = Math.min(...longest);
+      else delete next.since;
+      groups.set(key, { row: next, recent: Math.max(recent, existing.recent) });
     }
   }
-  rows.sort((a, b) => RANK[a.row.status] - RANK[b.row.status] || b.recent - a.recent);
+  const all = [...groups.values()];
+  const count = (s: ActivityRow["status"]) => all.filter(g => g.row.status === s).length;
+  const running = count("running"), waiting = count("waiting"), failed = count("failed");
+  all.sort((a, b) => RANK[a.row.status] - RANK[b.row.status] || b.recent - a.recent);
   return {
     updatedAt: nowSec,
     running,
     waiting,
     failed,
-    rows: running + waiting > 0 ? rows.slice(0, MAX_ROWS).map(r => r.row) : [],
+    rows: running + waiting > 0 ? all.slice(0, MAX_ROWS).map(g => g.row) : [],
     offline,
   };
 }
