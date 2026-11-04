@@ -26,7 +26,11 @@ export default function contribute(server: PluginServerContext) {
   server.handle(activityRegister, async (input, { paseo }) => {
     await engine.ensureStarted(paseo);
     await engine.register(input);
-    return { configured: engine.configuredFor(input.environment), serverId: await engine.selfServerId(paseo) };
+    return {
+      configured: engine.configuredFor(input.environment),
+      serverId: await engine.selfServerId(paseo),
+      alerts: engine.alertsFor(input.deviceId),
+    };
   });
 
   server.handle(activityUnregister, async ({ deviceId }, { paseo }) => {

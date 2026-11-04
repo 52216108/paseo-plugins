@@ -13,6 +13,8 @@ export const registerInput = z.object({
   // 省略 = 保持原值；null = 清除。
   pushToStartToken: token.nullable().optional(),
   activityToken: token.nullable().optional(),
+  // 普通通知的设备令牌（registerForRemoteNotifications）。省略 = 保持原值；null = 清除（App 里关了通知）。
+  alertToken: token.nullable().optional(),
   hosts: z.array(z.object({ serverId: z.string().min(1).max(200), label: z.string().max(200) })).max(50),
 });
 export type RegisterInput = z.output<typeof registerInput>;
@@ -20,7 +22,8 @@ export type RegisterInput = z.output<typeof registerInput>;
 export const activityRegister = defineRpc({
   name: "activity.register",
   input: registerInput,
-  output: z.object({ configured: z.boolean(), serverId: z.string() }),
+  // alerts = 该设备有 alertToken 且其环境已配密钥（插件会给它发普通通知）；App 只在为 true 时停掉后台本地通知。
+  output: z.object({ configured: z.boolean(), serverId: z.string(), alerts: z.boolean() }),
 });
 
 export const activityUnregister = defineRpc({

@@ -45,6 +45,8 @@ export class Store {
       environment: d.environment === "development" ? "development" : "production",
       pushToStartToken: d.pushToStartToken ?? null,
       activityToken: d.activityToken ?? null,
+      // 旧记录没有该字段，按 null 读。
+      alertToken: d.alertToken ?? null,
       hosts: Array.isArray(d.hosts) ? d.hosts : [],
       activityStartedAt: d.activityStartedAt ?? null,
       lastStartAt: d.lastStartAt ?? null,

@@ -54,6 +54,31 @@ export function validateKey(input: ApnsKey): ApnsKey {
 /** 每个环境一把密钥（Apple 后台按 Sandbox / Production 分开建的密钥各管各的）。 */
 export type ApnsKeys = Partial<Record<Environment, ApnsKey>>;
 
+export interface SendOptions { pushType?: "liveactivity" | "alert"; collapseId?: string }
+
+/** APNs 限制 apns-collapse-id 不超过 64 字节。 */
+export const COLLAPSE_ID_MAX_BYTES = 64;
+
+export function requestHeaders(
+  deviceToken: string, auth: string, topic: string, priority: number, length: number, opts: SendOptions = {},
+): http2.OutgoingHttpHeaders {
+  const alert = opts.pushType === "alert";
+  const headers: http2.OutgoingHttpHeaders = {
+    ":method": "POST",
+    ":path": `/3/device/${deviceToken}`,
+    "authorization": `bearer ${auth}`,
+    "apns-push-type": alert ? "alert" : "liveactivity",
+    "apns-topic": alert ? topic : `${topic}.push-type.liveactivity`,
+    "apns-priority": String(priority),
+    "content-type": "application/json",
+    "content-length": length,
+  };
+  if (opts.collapseId && Buffer.byteLength(opts.collapseId, "utf8") <= COLLAPSE_ID_MAX_BYTES) {
+    headers["apns-collapse-id"] = opts.collapseId;
+  }
+  return headers;
+}
+
 export class ApnsClient {
   private keys = new Map<Environment, { config: ApnsKey; object: KeyObject }>();
   private jwts = new Map<Environment, { value: string; at: number }>();
@@ -101,7 +126,14 @@ export class ApnsClient {
     session?.destroy();
   }
 
-  async send(env: Environment, deviceToken: string, topic: string, priority: number, payload: unknown): Promise<PushResult> {
+  /**
+   * 发一条推送。默认是灵动岛（liveactivity，topic 加 .push-type.liveactivity 后缀）；
+   * pushType = "alert" 是普通通知，topic 就是 bundleId，可带 collapseId（同一会话新通知替换旧的）。
+   */
+  async send(
+    env: Environment, deviceToken: string, topic: string, priority: number, payload: unknown,
+    opts: SendOptions = {},
+  ): Promise<PushResult> {
     let auth: string;
     try { auth = this.token(env, Date.now()); } catch (error) {
       return { ok: false, status: null, reason: error instanceof Error ? error.message : String(error) };
@@ -115,16 +147,7 @@ export class ApnsClient {
         done({ ok: false, status: null, reason: error instanceof Error ? error.message : String(error) });
         return;
       }
-      const req = session.request({
-        ":method": "POST",
-        ":path": `/3/device/${deviceToken}`,
-        "authorization": `bearer ${auth}`,
-        "apns-push-type": "liveactivity",
-        "apns-topic": `${topic}.push-type.liveactivity`,
-        "apns-priority": String(priority),
-        "content-type": "application/json",
-        "content-length": body.length,
-      });
+      const req = session.request(requestHeaders(deviceToken, auth, topic, priority, body.length, opts));
       req.setTimeout(REQUEST_TIMEOUT_MS, () => {
         req.close(http2.constants.NGHTTP2_CANCEL);
         this.dropSession(env);

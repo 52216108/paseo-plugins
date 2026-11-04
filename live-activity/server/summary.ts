@@ -5,15 +5,22 @@ export interface AgentLite {
   id: string;
   title: string | null;
   status: string;
-  pendingPermissions: readonly unknown[];
+  pendingPermissions: readonly PermissionLite[];
   activeTurn?: { turnId: string; startedAt: string | null } | null;
   labels: Readonly<Record<string, string>>;
   archivedAt?: string | null;
   attentionReason?: string | null;
+  /** daemon 的提醒信号：需要提醒时为 true，attentionTimestamp 是这次提醒的时间（ISO）。 */
+  requiresAttention?: boolean;
+  attentionTimestamp?: string | null;
+  lastError?: string | null;
   updatedAt: string;
   workspaceId?: string | null;
   cwd?: string | null;
 }
+
+/** 权限请求只留通知要用的字段。 */
+export interface PermissionLite { title?: string | null; name?: string | null; kind?: string | null }
 
 export interface HostRef { serverId: string; label: string }
 
@@ -41,17 +48,33 @@ export const MAX_ROWS = 4;
 export const PARENT_AGENT_LABEL = "paseo.parent-agent-id";
 export const PARENT_SERVER_LABEL = "paseo.parent-server-id";
 
+export const ERROR_MAX_CHARS = 200;
+
+/** 按字符（码点）截短，不切坏 emoji / 生僻字。 */
+export function clipChars(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length > max ? chars.slice(0, max).join("") : text;
+}
+
 /** 只保留汇总要用的字段，避免长期持有整份快照。 */
 export function toLite(agent: AgentLite): AgentLite {
   return {
     id: agent.id,
     title: agent.title ?? null,
     status: agent.status,
-    pendingPermissions: agent.pendingPermissions ?? [],
+    pendingPermissions: (agent.pendingPermissions ?? []).map(p => ({
+      title: typeof p?.title === "string" ? p.title : null,
+      name: typeof p?.name === "string" ? p.name : null,
+      kind: typeof p?.kind === "string" ? p.kind : null,
+    })),
     activeTurn: agent.activeTurn ?? null,
     labels: agent.labels ?? {},
     archivedAt: agent.archivedAt ?? null,
     attentionReason: agent.attentionReason ?? null,
+    requiresAttention: agent.requiresAttention === true,
+    attentionTimestamp: agent.attentionTimestamp ?? null,
+    // 通知正文只用前 200 字，不长期持有整段错误。
+    lastError: typeof agent.lastError === "string" ? clipChars(agent.lastError, ERROR_MAX_CHARS) : null,
     updatedAt: agent.updatedAt,
     workspaceId: agent.workspaceId ?? null,
     cwd: agent.cwd ?? null,

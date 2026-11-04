@@ -1,4 +1,5 @@
 // 纯函数：根据设备记录与当前汇总状态，决定这次要推哪些 APNs 消息，以及推送结果如何回写设备记录。
+import type { RegisterInput } from "../shared/contracts.ts";
 import { isActive, sameContent, type ContentState, type HostRef } from "./summary.ts";
 
 export type Environment = "development" | "production";
@@ -10,6 +11,8 @@ export interface Device {
   environment: Environment;
   pushToStartToken: string | null;
   activityToken: string | null;
+  /** 普通通知（push-type alert）的设备令牌；null = 不发普通通知。 */
+  alertToken: string | null;
   hosts: HostRef[];
   /** 当前活动的开始时间（start 推送或收到新的 activityToken 时记录），用于 8 小时上限前轮换。 */
   activityStartedAt: number | null;
@@ -118,9 +121,11 @@ export function decide(device: Device, state: ContentState, nowMs: number): Push
     const last = device.lastSent;
     const changed = !last || !sameContent(last.state, state);
     if (changed || nowMs - last.at >= REFRESH_MS) {
+      // 设备能收普通通知时，「需要你批准」由普通通知响铃，这里只提高优先级、不再带 alert，免得响两次。
+      const withAlert = waitingUp && !device.alertToken;
       steps.push({
         kind: "update", tokenKind: "activity", token: device.activityToken, priority: waitingUp ? 10 : 5, state,
-        payload: buildPayload("update", state, nowMs, waitingUp ? { alert: waitingAlert(state) } : {}),
+        payload: buildPayload("update", state, nowMs, withAlert ? { alert: waitingAlert(state) } : {}),
       });
     }
     return steps;
@@ -147,6 +152,34 @@ export function settleIdle(device: Device, state: ContentState, nowMs: number): 
   device.lastStartAt = null;
   device.activityStartedAt = null;
   return true;
+}
+
+/** 新设备的空记录。 */
+export function newDevice(input: Pick<RegisterInput, "deviceId" | "bundleId" | "environment">): Device {
+  return {
+    deviceId: input.deviceId, bundleId: input.bundleId, environment: input.environment,
+    pushToStartToken: null, activityToken: null, alertToken: null, hosts: [],
+    activityStartedAt: null, lastStartAt: null, lastSent: null, lastSentWaiting: 0,
+  };
+}
+
+/** 把一次登记写进设备记录（就地修改：正在进行的推送回写的是同一个对象）。令牌字段省略 = 保持原值；null = 清除。 */
+export function applyRegister(device: Device, input: RegisterInput, nowMs: number): Device {
+  device.bundleId = input.bundleId;
+  device.environment = input.environment;
+  device.hosts = input.hosts.map(h => ({ serverId: h.serverId, label: h.label }));
+  if (input.pushToStartToken !== undefined) device.pushToStartToken = input.pushToStartToken;
+  if (input.alertToken !== undefined) device.alertToken = input.alertToken;
+  if (input.activityToken !== undefined) {
+    if (input.activityToken === null) {
+      // App 那边活动结束了（本地结束或被用户划掉）：下次有会话开始就能重新 start。
+      device.activityStartedAt = null;
+      if (device.activityToken) { device.lastSent = null; device.lastSentWaiting = 0; device.lastStartAt = null; }
+    }
+    else if (input.activityToken !== device.activityToken) device.activityStartedAt = nowMs;
+    device.activityToken = input.activityToken;
+  }
+  return device;
 }
 
 export interface PushResult { ok: boolean; status: number | null; reason: string | null }

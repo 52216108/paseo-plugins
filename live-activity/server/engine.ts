@@ -1,10 +1,11 @@
 // 调度：汇总状态 → 去抖 → 按设备决定推送 → 调 APNs → 回写设备记录。
 import type { LastPush, RegisterInput } from "../shared/contracts.ts";
 import { ApnsClient, validateKey, type ApnsKey, type ApnsKeys } from "./apns.ts";
-import { applyResult, decide, settleIdle, type Device, type Environment } from "./decide.ts";
+import { applyRegister, applyResult, decide, isDeadToken, newDevice, settleIdle, type Device, type Environment } from "./decide.ts";
+import { alertsEnabled, alertTargets, buildAlertPayload, ALERT_MAX_AGE_MS, type AlertEvent } from "./notify.ts";
 import { Sources, type Api } from "./sources.ts";
 import { Store } from "./store.ts";
-import { buildState } from "./summary.ts";
+import { buildState, type WorkspaceInfo } from "./summary.ts";
 
 const DEBOUNCE_MS = 1500;
 const TICK_MS = 60_000;
@@ -21,6 +22,12 @@ export class LiveActivity {
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private tick: ReturnType<typeof setInterval> | null = null;
   private chain: Promise<void> = Promise.resolve();
+  /** 普通通知独立排队，不阻塞灵动岛的 evaluate。 */
+  private alertChain: Promise<void> = Promise.resolve();
+  /** 已排队的通知（serverId:agentId:时间戳 → 排队时间），重复事件去重。 */
+  private alerted = new Map<string, number>();
+  /** 设备记录的写盘串行化，后写的总是最新状态。 */
+  private saving: Promise<void> = Promise.resolve();
   /** 已经提示过「没配这个环境的密钥」的环境，免得每次都打日志。 */
   private warnedUnconfigured = new Set<Environment>();
   private disposed = false;
@@ -66,7 +73,7 @@ export class LiveActivity {
 
   private async start(paseo: Api) {
     await this.ready;
-    const sources = new Sources(paseo, () => this.schedule(), log);
+    const sources = new Sources(paseo, () => this.schedule(), log, (serverId, event, workspaces) => this.notify(serverId, event, workspaces));
     this.sources = sources;
     await sources.init();
     await sources.sync(this.allHosts());
@@ -130,9 +137,59 @@ export class LiveActivity {
     if (dirty) await this.persist();
   }
 
-  private async persist() {
-    try { await this.store.saveDevices([...this.devices.values()]); }
-    catch (error) { log(`保存设备记录失败：${(error as Error).message}`); }
+  private persist(): Promise<void> {
+    const write = this.saving.then(() => this.store.saveDevices([...this.devices.values()]));
+    this.saving = write.catch(() => {});
+    return write.catch(error => log(`保存设备记录失败：${(error as Error).message}`));
+  }
+
+  /** daemon 的提醒信号有新时间戳：给相关设备发普通通知（同一会话同一时间戳只发一次）。 */
+  private notify(serverId: string, event: AlertEvent, workspaces: ReadonlyMap<string, WorkspaceInfo>) {
+    if (this.disposed) return;
+    const now = Date.now();
+    const key = `${serverId}:${event.agent.id}:${event.timestamp}`;
+    if (this.alerted.has(key)) return;
+    for (const [k, at] of this.alerted) if (now - at > 2 * ALERT_MAX_AGE_MS) this.alerted.delete(k);
+    this.alerted.set(key, now);
+    this.alertChain = this.alertChain
+      .then(() => this.sendAlerts(serverId, event, workspaces))
+      .catch(error => log(`发送通知出错：${(error as Error).message}`));
+  }
+
+  private async sendAlerts(serverId: string, event: AlertEvent, workspaces: ReadonlyMap<string, WorkspaceInfo>) {
+    let dirty = false;
+    for (const { device, hostLabel } of alertTargets(this.devices.values(), serverId)) {
+      if (this.disposed) return;
+      const token = device.alertToken;
+      if (!token) continue;
+      if (!this.apns.configuredFor(device.environment)) {
+        if (!this.warnedUnconfigured.has(device.environment)) {
+          log(`未配置 ${device.environment} 环境的 APNs 密钥，不给这类设备推送（App 设置里配置后生效）`);
+        }
+        this.warnedUnconfigured.add(device.environment);
+        continue;
+      }
+      const payload = buildAlertPayload({ serverId, hostLabel, agent: event.agent, reason: event.reason, workspaces });
+      const result = await this.apns.send(device.environment, token, device.bundleId, 10, payload, {
+        pushType: "alert", collapseId: event.agent.id,
+      });
+      const at = Date.now();
+      this.lastPush = { at, ok: result.ok, status: result.status, reason: result.reason };
+      log(`通知（${event.reason}）→ alert ${short(token)}（设备 ${device.deviceId.slice(0, 8)}）：`
+        + (result.ok ? "成功" : `失败 ${result.status ?? "-"} ${result.reason ?? ""}`));
+      // 令牌失效只清 alertToken；推送期间 App 可能已登记新令牌，只清刚用过的那个。其他失败不重试。
+      if (!result.ok && isDeadToken(result.status, result.reason) && device.alertToken === token) {
+        device.alertToken = null;
+        dirty = true;
+      }
+    }
+    if (dirty) await this.persist();
+  }
+
+  /** register 输出的 alerts：插件会不会给这台设备发普通通知。 */
+  alertsFor(deviceId: string): boolean {
+    const device = this.devices.get(deviceId);
+    return !!device && alertsEnabled(device, env => this.apns.configuredFor(env));
   }
 
   async register(input: RegisterInput): Promise<void> {
@@ -140,29 +197,12 @@ export class LiveActivity {
     const now = Date.now();
     const old = this.devices.get(input.deviceId);
     // 就地修改已有记录：正在进行的推送回写的是同一个对象。
-    const device: Device = old ?? {
-      deviceId: input.deviceId, bundleId: input.bundleId, environment: input.environment,
-      pushToStartToken: null, activityToken: null, hosts: [],
-      activityStartedAt: null, lastStartAt: null, lastSent: null, lastSentWaiting: 0,
-    };
-    device.bundleId = input.bundleId;
-    device.environment = input.environment;
-    device.hosts = input.hosts.map(h => ({ serverId: h.serverId, label: h.label }));
-    // 字段省略 = 保持原值；null = 清除。
-    if (input.pushToStartToken !== undefined) device.pushToStartToken = input.pushToStartToken;
-    if (input.activityToken !== undefined) {
-      if (input.activityToken === null) {
-        // App 那边活动结束了（本地结束或被用户划掉）：下次有会话开始就能重新 start。
-        device.activityStartedAt = null;
-        if (device.activityToken) { device.lastSent = null; device.lastSentWaiting = 0; device.lastStartAt = null; }
-      }
-      else if (input.activityToken !== device.activityToken) device.activityStartedAt = now;
-      device.activityToken = input.activityToken;
-    }
+    const device = applyRegister(old ?? newDevice(input), input, now);
     this.devices.set(device.deviceId, device);
     await this.persist();
     log(`设备 ${device.deviceId.slice(0, 8)} 已登记（${device.environment}，机器 ${device.hosts.length} 台，`
-      + `activity ${device.activityToken ? short(device.activityToken) : "无"}，push-to-start ${device.pushToStartToken ? short(device.pushToStartToken) : "无"}）`);
+      + `activity ${device.activityToken ? short(device.activityToken) : "无"}，push-to-start ${device.pushToStartToken ? short(device.pushToStartToken) : "无"}，`
+      + `alert ${device.alertToken ? short(device.alertToken) : "无"}）`);
     // 不等新机器连上再回复（连不上时要等几十秒，App 会当作超时）；数据到了订阅会触发重算。
     void this.sources?.sync(this.allHosts()).catch(error => log(`同步机器失败：${(error as Error).message}`));
     // 注册后立即按当前状态推一次（如需要）。

@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { buildState, type AgentLite, type HostData } from "../server/summary.ts";
-import { applyResult, decide, settleIdle, ORPHAN_RESTART_MS, ROTATE_AFTER_MS, START_COOLDOWN_MS, REFRESH_MS, type Device } from "../server/decide.ts";
-import { signJwt, validateKey, loadPrivateKey, ApnsClient } from "../server/apns.ts";
+import { applyRegister, applyResult, decide, newDevice, settleIdle, ORPHAN_RESTART_MS, ROTATE_AFTER_MS, START_COOLDOWN_MS, REFRESH_MS, type Device } from "../server/decide.ts";
+import { signJwt, validateKey, loadPrivateKey, ApnsClient, requestHeaders } from "../server/apns.ts";
+import { alertsEnabled, alertTargets, buildAlertPayload, checkAlert, scanAlerts, ALERT_MAX_AGE_MS, type NotifiedMap } from "../server/notify.ts";
+import { activityRegister, registerInput } from "../shared/contracts.ts";
+import { toLite } from "../server/summary.ts";
 import { Store } from "../server/store.ts";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +27,7 @@ function host(serverId: string, label: string, agents: AgentLite[] | null): Host
 function device(over: Partial<Device> = {}): Device {
   return {
     deviceId: "dev1", bundleId: "com.example.app", environment: "development",
-    pushToStartToken: "aa".repeat(32), activityToken: null, hosts: [{ serverId: "s1", label: "Mac" }],
+    pushToStartToken: "aa".repeat(32), activityToken: null, alertToken: null, hosts: [{ serverId: "s1", label: "Mac" }],
     activityStartedAt: null, lastStartAt: null, lastSent: null, lastSentWaiting: 0, ...over,
   };
 }
@@ -265,4 +268,135 @@ test("按工作区合并：一个工作区一行，状态取最紧急的，计�
   assert.equal(st.rows[1].title, "检查安卓店小助绘画阴影");
   assert.equal(st.rows[1].project, "订个包间工作区");
   assert.equal(st.rows[1].since, (T0 - 600_000) / 1000);
+});
+
+// ---------- 普通通知 ----------
+
+const iso = (ms: number) => new Date(ms).toISOString();
+const attn = (reason: string, at: number, over: Partial<AgentLite> = {}) =>
+  agent({ requiresAttention: true, attentionReason: reason, attentionTimestamp: iso(at), ...over });
+
+test("通知判定：基线不发，时间戳变化才发，同一时间戳只发一次", () => {
+  const notified: NotifiedMap = new Map();
+  const a = attn("finished", T0 - 1000, { id: "n1" });
+  const list = new Map([[a.id, a]]);
+  // 全量快照只建基线（即使在 120 秒内）
+  assert.deepEqual(scanAlerts(list, "s1", notified, T0, true), []);
+  assert.equal(checkAlert(a, "s1", list, notified, T0), null);
+  // 新时间戳 → 发一次
+  const b = { ...a, attentionTimestamp: iso(T0 - 500) };
+  const ev = checkAlert(b, "s1", list, notified, T0);
+  assert.equal(ev?.reason, "finished");
+  assert.equal(ev?.timestamp, iso(T0 - 500));
+  assert.equal(checkAlert(b, "s1", list, notified, T0 + 10), null);
+  // 不需要提醒 / 原因不在范围内不发
+  assert.equal(checkAlert({ ...a, attentionTimestamp: iso(T0 - 100), requiresAttention: false }, "s1", list, notified, T0), null);
+  assert.equal(checkAlert({ ...a, attentionTimestamp: iso(T0 - 90), attentionReason: null }, "s1", list, notified, T0), null);
+});
+
+test("通知判定：超过 120 秒不发；子会话、归档不发", () => {
+  const notified: NotifiedMap = new Map();
+  const old = attn("error", T0 - ALERT_MAX_AGE_MS, { id: "old" });
+  const parent = agent({ id: "par" });
+  const child = attn("permission", T0 - 1000, { id: "kid", labels: { "paseo.parent-agent-id": "par" } });
+  const archived = attn("finished", T0 - 1000, { id: "arc", archivedAt: iso(T0) });
+  const list = new Map([old, parent, child, archived].map(x => [x.id, x]));
+  for (const x of [old, child, archived]) assert.equal(checkAlert(x, "s1", list, notified, T0), null);
+  // 刚好 120 秒内的会发
+  const fresh = attn("error", T0 - ALERT_MAX_AGE_MS + 1, { id: "fresh" });
+  assert.equal(checkAlert(fresh, "s1", list, notified, T0)?.reason, "error");
+});
+
+test("轮询：只有第一份列表是基线，之后与上一份对比", () => {
+  const notified: NotifiedMap = new Map();
+  const a = agent({ id: "p1" });
+  assert.deepEqual(scanAlerts(new Map([[a.id, a]]), "s1", notified, T0, true), []);
+  const b = attn("permission", T0 - 2000, { id: "p1" });
+  const events = scanAlerts(new Map([[b.id, b]]), "s1", notified, T0, false);
+  assert.deepEqual(events.map(e => e.agent.id), ["p1"]);
+  assert.deepEqual(scanAlerts(new Map([[b.id, b]]), "s1", notified, T0 + 30_000, false), []);
+  // 不在列表里的从记录里去掉
+  scanAlerts(new Map(), "s1", notified, T0, false);
+  assert.equal(notified.size, 0);
+});
+
+test("载荷：三种 reason 的 title / body / category，thread-id 与顶层 serverId / agentId", () => {
+  const ws = new Map([["w1", { project: "宴小助", title: "修登录页" }]]);
+  const perm = toLite({ ...agent({ id: "ag1", title: "迁移数据" }), pendingPermissions: [{ title: "运行 npm test", name: "Bash", kind: "tool", input: { big: "x" } }] } as unknown as AgentLite);
+  assert.equal("input" in perm.pendingPermissions[0], false);
+  const p = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: perm, reason: "permission" });
+  assert.deepEqual(p, {
+    aps: { alert: { title: "需要你批准 · 迁移数据", subtitle: "Studio", body: "运行 npm test" }, sound: "default", category: "paseo.permission", "thread-id": "s1:ag1" },
+    serverId: "s1", agentId: "ag1", reason: "permission",
+  });
+  const byName = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: { ...perm, pendingPermissions: [{ name: "Bash" }] }, reason: "permission" });
+  assert.equal(byName.aps.alert.body, "Bash");
+  assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "S", agent: { ...perm, pendingPermissions: [] }, reason: "permission" }).aps.alert.body, "有一个权限请求等你处理");
+
+  const longError = "错".repeat(300);
+  const err = toLite({ ...agent({ id: "ag2", title: "" }), lastError: longError } as AgentLite);
+  const e = buildAlertPayload({ serverId: "s2", hostLabel: "mini", agent: err, reason: "error" });
+  assert.equal(e.aps.alert.title, "出错了 · 会话");
+  assert.equal(e.aps.alert.body, "错".repeat(200));
+  assert.equal(e.aps.category, "paseo.finished");
+  assert.equal(buildAlertPayload({ serverId: "s2", hostLabel: "mini", agent: { ...err, lastError: null }, reason: "error" }).aps.alert.body, "会话出错");
+
+  const fin = agent({ id: "ag3", title: "写文档", workspaceId: "w1" });
+  const f = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: fin, reason: "finished", workspaces: ws });
+  assert.equal(f.aps.alert.title, "完成 · 写文档");
+  assert.equal(f.aps.alert.body, "宴小助 · 修登录页");
+  assert.equal(f.aps.category, "paseo.finished");
+  assert.equal(f.aps["thread-id"], "s1:ag3");
+  assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "S", agent: agent({ cwd: "/x/foo" }), reason: "finished" }).aps.alert.body, "foo");
+  assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "S", agent: agent(), reason: "finished" }).aps.alert.body, "回合已结束");
+});
+
+test("请求头：alert 用 bundleId 作 topic、优先级 10、collapse-id 超 64 字节省略；灵动岛不变", () => {
+  const h = requestHeaders("ab".repeat(32), "jwt", "com.example.app", 10, 42, { pushType: "alert", collapseId: "agent-1" });
+  assert.equal(h["apns-push-type"], "alert");
+  assert.equal(h["apns-topic"], "com.example.app");
+  assert.equal(h["apns-priority"], "10");
+  assert.equal(h["apns-collapse-id"], "agent-1");
+  assert.equal(requestHeaders("ab", "jwt", "com.example.app", 10, 1, { pushType: "alert", collapseId: "x".repeat(65) })["apns-collapse-id"], undefined);
+  assert.equal(requestHeaders("ab", "jwt", "com.example.app", 10, 1, { pushType: "alert", collapseId: "x".repeat(64) })["apns-collapse-id"], "x".repeat(64));
+  const la = requestHeaders("ab", "jwt", "com.example.app", 5, 1);
+  assert.equal(la["apns-push-type"], "liveactivity");
+  assert.equal(la["apns-topic"], "com.example.app.push-type.liveactivity");
+  assert.equal("apns-collapse-id" in la, false);
+});
+
+test("alertToken：省略 = 保持、null = 清除、校验转小写；旧记录按 null 读；目标设备与 alerts 输出", async () => {
+  const base = { deviceId: "d1", bundleId: "com.example.app", environment: "production" as const, hosts: [{ serverId: "s1", label: "Studio" }] };
+  const d = applyRegister(newDevice(base), registerInput.parse({ ...base, alertToken: "AB".repeat(32) }), T0);
+  assert.equal(d.alertToken, "ab".repeat(32));
+  applyRegister(d, registerInput.parse({ ...base, activityToken: "cd".repeat(32) }), T0);
+  assert.equal(d.alertToken, "ab".repeat(32));
+  applyRegister(d, registerInput.parse({ ...base, alertToken: null }), T0);
+  assert.equal(d.alertToken, null);
+  assert.throws(() => registerInput.parse({ ...base, alertToken: "zz" }));
+
+  const dir = mkdtempSync(join(tmpdir(), "la-dev-"));
+  writeFileSync(join(dir, "devices.json"), JSON.stringify({ version: 1, devices: [{ deviceId: "old", bundleId: "b", environment: "production", hosts: [] }] }));
+  assert.equal((await new Store(dir).loadDevices())[0].alertToken, null);
+
+  const withToken = device({ alertToken: "ef".repeat(32), environment: "production", hosts: [{ serverId: "s1", label: "Studio" }] });
+  const other = device({ deviceId: "d2", alertToken: "ef".repeat(32), hosts: [{ serverId: "s9", label: "x" }] });
+  const none = device({ deviceId: "d3" });
+  assert.deepEqual(alertTargets([withToken, other, none], "s1").map(t => [t.device.deviceId, t.hostLabel]), [["dev1", "Studio"]]);
+  assert.equal(alertsEnabled(withToken, env => env === "production"), true);
+  assert.equal(alertsEnabled(withToken, () => false), false);
+  assert.equal(alertsEnabled(none, () => true), false);
+  assert.deepEqual(activityRegister.output.parse({ configured: true, serverId: "s1", alerts: false }), { configured: true, serverId: "s1", alerts: false });
+});
+
+test("有 alertToken 时灵动岛 waiting 增加的 update 仍 priority 10 但不带 alert；start 仍带 alert", () => {
+  const state = buildState([host("s1", "Mac", [agent({ status: "running", title: "修登录页", pendingPermissions: [{}] })])], T0 / 1000);
+  const d = device({ activityToken: "bb".repeat(32), activityStartedAt: T0, alertToken: "ef".repeat(32) });
+  const [step] = decide(d, state, T0);
+  assert.equal(step.kind, "update");
+  assert.equal(step.priority, 10);
+  assert.equal(step.payload.aps.alert, undefined);
+  const [start] = decide(device({ alertToken: "ef".repeat(32) }), state, T0);
+  assert.equal(start.kind, "start");
+  assert.deepEqual(start.payload.aps.alert, { title: "需要你处理", body: "修登录页", sound: "default" });
 });

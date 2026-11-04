@@ -1,5 +1,6 @@
 // 各机器会话数据源：本机与已关联机器（connected hosts）都先尝试订阅，订阅失败或中断就降级为每 30 秒轮询。
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import { checkAlert, scanAlerts, type AlertEvent, type NotifiedMap } from "./notify.ts";
 import { toLite, type AgentLite, type HostData, type HostRef, type WorkspaceInfo } from "./summary.ts";
 
 export type Api = PluginHandlerContext["paseo"];
@@ -28,8 +29,13 @@ interface SourceOptions {
   open(): Promise<Api>;
   release(api: Api): Promise<void>;
   onChange(): void;
+  /** 需要发普通通知（daemon 的提醒信号有新的时间戳）。 */
+  onAlert(serverId: string, event: AlertEvent, workspaces: ReadonlyMap<string, WorkspaceInfo>): void;
   log(line: string): void;
 }
+
+/** 列表来源：首次加载 / 订阅快照只建基线；轮询拿到的列表与上一份对比（该数据源第一份列表除外）。 */
+type ListKind = "snapshot" | "poll";
 
 /** 一台机器的会话列表。agents 为 null 表示当前拿不到数据（离线）。 */
 export class AgentSource {
@@ -44,6 +50,10 @@ export class AgentSource {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastError: string | null = null;
   private closed = false;
+  /** agentId → 已通知过（或作为基线见过）的 attentionTimestamp。 */
+  private notified: NotifiedMap = new Map();
+  /** 是否已有第一份列表作为基线。 */
+  private baselined = false;
 
   constructor(private readonly opts: SourceOptions) {}
 
@@ -55,9 +65,9 @@ export class AgentSource {
       const result = await withTimeout(api.agents.list({ ...LIST_OPTIONS, subscribe: {} }), CONNECT_TIMEOUT_MS, "订阅会话列表");
       if (this.closed) { await result.subscription.release().catch(() => {}); return; }
       this.subscription = result.subscription;
-      await this.replace(api, result);
+      await this.replace(api, result, "snapshot");
       this.unsubscribe = result.subscription.subscribe({
-        snapshot: snapshot => { void this.replace(api, snapshot as ListResult).catch(() => {}); },
+        snapshot: snapshot => { void this.replace(api, snapshot as ListResult, "snapshot").catch(() => {}); },
         update: msg => this.apply(msg as UpdateMessage),
         error: error => { void this.downgrade(`订阅中断：${message(error)}`); },
       });
@@ -113,7 +123,8 @@ export class AgentSource {
     try {
       const api = await this.ensureApi();
       const result = await withTimeout(api.agents.list(LIST_OPTIONS), CONNECT_TIMEOUT_MS, "拉取会话列表");
-      await this.replace(api, result);
+      // 轮询模式下与上一份列表对比；订阅模式里机器恢复在线时的补拉算重连，只建基线。
+      await this.replace(api, result, this.pollTimer ? "poll" : "snapshot");
       this.lastError = null;
     } catch (error) {
       const text = message(error);
@@ -130,7 +141,7 @@ export class AgentSource {
   }
 
   /** 用一份完整列表替换（超过一页时继续翻页）。 */
-  private async replace(api: Api, first: ListResult) {
+  private async replace(api: Api, first: ListResult, kind: ListKind) {
     const entries = [...first.entries];
     let page = first;
     for (let i = 1; i < MAX_PAGES && page.pageInfo?.hasMore && page.pageInfo.nextCursor; i++) {
@@ -143,8 +154,12 @@ export class AgentSource {
       if (agent && !agent.archivedAt) next.set(agent.id, toLite(agent));
     }
     if (this.closed) return;
+    const baseline = kind === "snapshot" || !this.baselined;
+    const alerts = scanAlerts(next, this.serverId, this.notified, Date.now(), baseline);
+    this.baselined = true;
     this.agents = next;
     this.opts.onChange();
+    for (const event of alerts) this.emitAlert(event);
     void this.refreshWorkspaces(api, true);
   }
 
@@ -181,6 +196,11 @@ export class AgentSource {
     }
   }
 
+  private emitAlert(event: AlertEvent) {
+    try { this.opts.onAlert(this.serverId, event, this.workspaces); }
+    catch (error) { this.opts.log(`${this.opts.name}：处理通知出错：${message(error)}`); }
+  }
+
   private apply(msg: UpdateMessage) {
     if (msg.type !== "agent_update" || !this.agents) return;
     const payload = msg.payload as { kind: "upsert"; agent: AgentLite } | { kind: "remove"; agentId: string } | undefined;
@@ -190,6 +210,8 @@ export class AgentSource {
       else {
         const lite = toLite(payload.agent);
         this.agents.set(lite.id, lite);
+        const event = checkAlert(lite, this.serverId, this.agents, this.notified, Date.now());
+        if (event) this.emitAlert(event);
         if (lite.workspaceId && !this.workspaces.has(lite.workspaceId) && this.api) void this.refreshWorkspaces(this.api, false);
       }
     } else if (payload.kind === "remove") {
@@ -206,7 +228,12 @@ export class Sources {
   selfId: string | null = null;
   private sources = new Map<string, AgentSource>();
 
-  constructor(private readonly paseo: Api, private readonly onChange: () => void, private readonly log: (line: string) => void) {}
+  constructor(
+    private readonly paseo: Api,
+    private readonly onChange: () => void,
+    private readonly log: (line: string) => void,
+    private readonly onAlert: SourceOptions["onAlert"] = () => {},
+  ) {}
 
   async init() {
     const directory = await this.paseo.hosts.list();
@@ -214,7 +241,7 @@ export class Sources {
     const local = new AgentSource({
       serverId: this.selfId, name: "本机",
       open: async () => this.paseo, release: async () => {},
-      onChange: this.onChange, log: this.log,
+      onChange: this.onChange, onAlert: this.onAlert, log: this.log,
     });
     this.sources.set(this.selfId, local);
     await local.start();
@@ -233,7 +260,7 @@ export class Sources {
         serverId, name: label || serverId,
         open: () => this.paseo.hosts.client(serverId),
         release: api => api.dispose(),
-        onChange: this.onChange, log: this.log,
+        onChange: this.onChange, onAlert: this.onAlert, log: this.log,
       });
       this.sources.set(serverId, source);
       started.push(source.start());
