@@ -10,6 +10,8 @@ const LIST_OPTIONS = { filter: { includeArchived: false }, page: { limit: 200 } 
 const POLL_MS = 30_000;
 const CONNECT_TIMEOUT_MS = 20_000;
 const MAX_PAGES = 10;
+/** 遇到不认识的工作区 ID 时补拉工作区列表的最短间隔。 */
+const WORKSPACE_REFRESH_MS = 10_000;
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -32,6 +34,10 @@ interface SourceOptions {
 /** 一台机器的会话列表。agents 为 null 表示当前拿不到数据（离线）。 */
 export class AgentSource {
   agents: Map<string, AgentLite> | null = null;
+  /** 工作区 ID → 显示名；拉不到就保持旧的（只影响行里的项目名）。 */
+  workspaces = new Map<string, string>();
+  private workspacesAt = 0;
+  private workspacesLoading = false;
   private api: Api | null = null;
   private subscription: { release(): Promise<void> } | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -139,6 +145,38 @@ export class AgentSource {
     if (this.closed) return;
     this.agents = next;
     this.opts.onChange();
+    void this.refreshWorkspaces(api, true);
+  }
+
+  /** 拉一遍工作区名。force=false 时只在有不认识的工作区且距上次超过 10 秒才拉。 */
+  private async refreshWorkspaces(api: Api, force: boolean) {
+    if (this.workspacesLoading || this.closed) return;
+    if (!force && Date.now() - this.workspacesAt < WORKSPACE_REFRESH_MS) return;
+    this.workspacesLoading = true;
+    this.workspacesAt = Date.now();
+    try {
+      const next = new Map<string, string>();
+      let cursor: string | undefined;
+      for (let i = 0; i < MAX_PAGES; i++) {
+        const page = await withTimeout(
+          api.workspaces.list({ filter: { includeBackground: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } }),
+          CONNECT_TIMEOUT_MS, "拉取工作区列表");
+        for (const entry of page.entries as unknown as { id?: string; projectDisplayName?: string; workspace?: { id?: string; projectDisplayName?: string } }[]) {
+          const w = entry.workspace ?? entry;
+          if (w.id && w.projectDisplayName) next.set(w.id, w.projectDisplayName);
+        }
+        cursor = page.pageInfo?.nextCursor ?? undefined;
+        if (!page.pageInfo?.hasMore || !cursor) break;
+      }
+      if (this.closed) return;
+      const changed = next.size !== this.workspaces.size || [...next].some(([k, v]) => this.workspaces.get(k) !== v);
+      this.workspaces = next;
+      if (changed) this.opts.onChange();
+    } catch (error) {
+      this.opts.log(`${this.opts.name}：拉取工作区名失败：${message(error)}`);
+    } finally {
+      this.workspacesLoading = false;
+    }
   }
 
   private apply(msg: UpdateMessage) {
@@ -147,7 +185,11 @@ export class AgentSource {
     if (!payload) return;
     if (payload.kind === "upsert") {
       if (payload.agent.archivedAt) this.agents.delete(payload.agent.id);
-      else this.agents.set(payload.agent.id, toLite(payload.agent));
+      else {
+        const lite = toLite(payload.agent);
+        this.agents.set(lite.id, lite);
+        if (lite.workspaceId && !this.workspaces.has(lite.workspaceId) && this.api) void this.refreshWorkspaces(this.api, false);
+      }
     } else if (payload.kind === "remove") {
       this.agents.delete(payload.agentId);
     } else {
@@ -198,7 +240,8 @@ export class Sources {
   }
 
   hostData(host: HostRef): HostData {
-    return { host, agents: this.sources.get(host.serverId)?.agents ?? null };
+    const source = this.sources.get(host.serverId);
+    return { host, agents: source?.agents ?? null, workspaces: source?.workspaces };
   }
 
   /** 按 hosts.list 的在线状态标记离线 / 恢复。 */

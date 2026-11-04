@@ -233,3 +233,15 @@ test("密钥按环境保存：旧格式当两个环境都用，新格式各管�
   assert.match(result.reason ?? "", /未配置 production/);
   client.close();
 });
+
+test("行里带工作区名：优先工作区显示名，没有就用目录名", () => {
+  const a = agent({ status: "running", workspaceId: "w1", cwd: "/Users/x/projects/foo" });
+  const b = agent({ status: "running", workspaceId: "w-unknown", cwd: "/Users/x/projects/bar/" });
+  const c = agent({ status: "running" });
+  const h: HostData = { host: { serverId: "s1", label: "Mac" }, agents: new Map([a, b, c].map(x => [x.id, x])), workspaces: new Map([["w1", "订个包间工作区"]]) };
+  const rows = buildState([h], T0 / 1000).rows;
+  const byId = new Map(rows.map(r => [r.agentId, r]));
+  assert.equal(byId.get(a.id)?.project, "订个包间工作区");
+  assert.equal(byId.get(b.id)?.project, "bar");
+  assert.equal("project" in (byId.get(c.id) ?? {}), false);
+});

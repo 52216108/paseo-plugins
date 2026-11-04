@@ -11,6 +11,8 @@ export interface AgentLite {
   archivedAt?: string | null;
   attentionReason?: string | null;
   updatedAt: string;
+  workspaceId?: string | null;
+  cwd?: string | null;
 }
 
 export interface HostRef { serverId: string; label: string }
@@ -20,6 +22,8 @@ export interface ActivityRow {
   agentId: string;
   host: string;
   title: string;
+  /** 工作区（项目）名：工作区的 projectDisplayName，拿不到时用工作目录最后一段。 */
+  project?: string;
   status: "waiting" | "failed" | "running";
   since?: number;
 }
@@ -49,6 +53,8 @@ export function toLite(agent: AgentLite): AgentLite {
     archivedAt: agent.archivedAt ?? null,
     attentionReason: agent.attentionReason ?? null,
     updatedAt: agent.updatedAt,
+    workspaceId: agent.workspaceId ?? null,
+    cwd: agent.cwd ?? null,
   };
 }
 
@@ -77,13 +83,26 @@ function seconds(iso: string | null | undefined): number | null {
 }
 
 /** 一台机器的数据：agents 为 null 表示拿不到（离线）。 */
-export interface HostData { host: HostRef; agents: ReadonlyMap<string, AgentLite> | null }
+export interface HostData {
+  host: HostRef;
+  agents: ReadonlyMap<string, AgentLite> | null;
+  /** 工作区 ID → 显示名（同 App 侧栏的项目名）。 */
+  workspaces?: ReadonlyMap<string, string>;
+}
+
+/** 与 App 的 projectName 同一规则：工作区显示名，否则工作目录最后一段。 */
+export function projectName(agent: AgentLite, workspaces?: ReadonlyMap<string, string>): string | undefined {
+  const name = agent.workspaceId ? workspaces?.get(agent.workspaceId) : undefined;
+  if (name?.trim()) return name;
+  const last = agent.cwd?.replace(/\/+$/, "").split("/").pop();
+  return last ? last : undefined;
+}
 
 export function buildState(hosts: readonly HostData[], nowSec: number): ContentState {
   const rows: { row: ActivityRow; recent: number }[] = [];
   let running = 0, waiting = 0, failed = 0;
   const offline: string[] = [];
-  for (const { host, agents } of hosts) {
+  for (const { host, agents, workspaces } of hosts) {
     if (!agents) { offline.push(host.label); continue; }
     for (const agent of agents.values()) {
       if (agent.archivedAt || isNested(agent, host.serverId, agents)) continue;
@@ -99,6 +118,8 @@ export function buildState(hosts: readonly HostData[], nowSec: number): ContentS
         title: agent.title?.trim() ? agent.title : "新会话",
         status,
       };
+      const project = projectName(agent, workspaces);
+      if (project) row.project = project;
       if (status === "running") {
         const since = seconds(agent.activeTurn?.startedAt);
         if (since !== null) row.since = since;
