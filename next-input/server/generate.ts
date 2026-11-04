@@ -54,8 +54,17 @@ export function codexArgs(outputFile: string, model = ""): string[] {
     "--output-last-message", outputFile, ...(model ? ["--model", model] : []), "-"];
 }
 
-export async function generateWithCodex(messages: Message[], signal: AbortSignal, cli: string, model = "",
+// 一次只跑一个 Codex 预测：每次都用凭据副本，并发时几个副本可能同时拿同一个刷新令牌去刷新。
+let codexQueue: Promise<unknown> = Promise.resolve();
+
+export function generateWithCodex(messages: Message[], signal: AbortSignal, cli: string, model = "",
   source = sourceCodexHome()): Promise<string> {
+  const run = codexQueue.catch(() => {}).then(() => runCodex(messages, signal, cli, model, source));
+  codexQueue = run;
+  return run;
+}
+
+async function runCodex(messages: Message[], signal: AbortSignal, cli: string, model: string, source: string): Promise<string> {
   if (signal.aborted) throw new Error("预测已取消");
   // 隔离的 CODEX_HOME：只带登录凭据和关掉全部工具的配置，在空目录里运行（不读 AGENTS.md），结束后删除。
   const isolated = await isolatedCodexHome(source);

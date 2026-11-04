@@ -10,8 +10,8 @@ import assert from "node:assert/strict";
 import { parseSuggestion, selectContext } from "../server/context.ts";
 import { Turns } from "../server/turns.ts";
 import { claudeArgs, codexArgs, generate, generateWithCodex } from "../server/generate.ts";
-import { isolatedCodexHome, sourceCodexHome, writeBackRefreshedAuth } from "../server/codex-home.ts";
-import { access, readFile } from "node:fs/promises";
+import { connectionSettings, isolatedCodexHome, sourceCodexHome, sweepStaleHomes, writeBackRefreshedAuth } from "../server/codex-home.ts";
+import { access, readFile, symlink, utimes } from "node:fs/promises";
 import { sendOnce } from "../server/send.ts";
 import { requiresEditing } from "../shared/safety.ts";
 import { Drafts } from "../client/drafts.ts";
@@ -308,18 +308,30 @@ test("刷新过的登录凭据写回用户目录，但不覆盖期间被别人�
   try {
     const real = join(dir, "auth.json");
     const used = join(dir, "used.json");
-    const original = Buffer.from("old");
+    const old = '{"tokens":{"refresh_token":"r1"}}';
+    const fresh = '{"tokens":{"refresh_token":"r2"}}';
+    const original = Buffer.from(old);
     // 没刷新：不动。
     await writeFile(real, original); await writeFile(used, original);
     assert.equal(await writeBackRefreshedAuth(real, original, used), false);
+    // 刷新到一半被杀（半截 JSON）：不写回，用户文件保持原样。
+    await writeFile(used, '{"tokens":{"refresh_tok');
+    assert.equal(await writeBackRefreshedAuth(real, original, used), false);
+    assert.equal(await readFile(real, "utf8"), old);
     // 刷新了、用户文件没变：写回。
-    await writeFile(used, "new");
+    await writeFile(used, fresh);
     assert.equal(await writeBackRefreshedAuth(real, original, used), true);
-    assert.equal(await readFile(real, "utf8"), "new");
+    assert.equal(await readFile(real, "utf8"), fresh);
     // 刷新了、但用户自己的 Codex 期间也刷新了：保留用户的。
     await writeFile(real, "theirs");
-    assert.equal(await writeBackRefreshedAuth(real, original, used), false);
+    assert.equal(await writeBackRefreshedAuth(real, Buffer.from(fresh), used), false);
     assert.equal(await readFile(real, "utf8"), "theirs");
+    // auth.json 是符号链接：写回到它指向的文件，链接保留。
+    const target = join(dir, "dotfiles-auth.json");
+    const link = join(dir, "linked.json");
+    await writeFile(target, old); await symlink(target, link); await writeFile(used, fresh);
+    assert.equal(await writeBackRefreshedAuth(link, Buffer.from(old), used), true);
+    assert.equal(await readFile(target, "utf8"), fresh);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -329,4 +341,49 @@ test("codex 按 PATH、用户目录、Homebrew 顺序查找", async () => {
   assert.ok(!list.some(p => p.startsWith("relative")));
   assert.ok(list.includes("/home/u/.local/bin/codex") && list.includes("/opt/homebrew/bin/codex"));
   assert.deepEqual(await findCodex(["/definitely/missing/codex"]), { path: null, searched: ["/definitely/missing/codex"] });
+});
+
+test("只把用户配置里与连接有关的设置带进隔离配置", () => {
+  const user = [
+    'model = "gpt-6"', 'model_provider = "corp"', 'chatgpt_base_url = "https://gw.example"',
+    'notify = ["sh", "-c", "evil"]', 'sandbox_mode = "danger-full-access"',
+    "[model_providers.corp]", 'base_url = "https://llm.corp/v1"', 'env_key = "CORP_KEY"',
+    "[model_providers.corp.http_headers]", 'X-Team = "a"',
+    "[mcp_servers.secret]", 'command = "secret"',
+    "[profiles.fast]", 'model = "x"',
+    '[projects."/Users/u/repo"]', 'trust_level = "trusted"',
+  ].join("\n");
+  const kept = connectionSettings(user);
+  for (const want of ['model_provider = "corp"', 'chatgpt_base_url = "https://gw.example"', "[model_providers.corp]",
+    'base_url = "https://llm.corp/v1"', "[model_providers.corp.http_headers]", 'X-Team = "a"'])
+    assert.ok(kept.includes(want), want);
+  for (const drop of ["notify", "danger-full-access", "mcp_servers", "secret", "profiles", "trust_level", 'model = "gpt-6"'])
+    assert.ok(!kept.includes(drop), drop);
+  assert.equal(connectionSettings('model = "x"\n[mcp_servers.a]\ncommand = "a"\n'), "");
+});
+
+test("隔离配置：连接用的顶层键在 [features] 之前，服务商表在之后", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "next-input-conn-"));
+  try {
+    await writeFile(join(dir, "config.toml"), 'model_provider = "corp"\n[model_providers.corp]\nbase_url = "https://llm"\n[mcp_servers.x]\ncommand = "x"\n');
+    const isolated = await isolatedCodexHome(dir);
+    const config = await readFile(join(isolated.home, "config.toml"), "utf8");
+    assert.ok(config.indexOf('model_provider = "corp"') < config.indexOf("[features]"));
+    assert.ok(config.indexOf("[features]") < config.indexOf("[model_providers.corp]"));
+    assert.ok(!config.includes("mcp_servers"));
+    await isolated.finish();
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("清掉崩溃后残留的旧隔离目录，不碰新的和别人的目录", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "next-input-sweep-"));
+  try {
+    const stale = join(dir, "next-input-codex-old"); const fresh = join(dir, "next-input-codex-new"); const other = join(dir, "other");
+    for (const d of [stale, fresh, other]) await mkdir(d);
+    const old = new Date(Date.now() - 60 * 60_000);
+    await utimes(stale, old, old); await utimes(other, old, old);
+    await sweepStaleHomes(dir);
+    await assert.rejects(access(stale));
+    await access(fresh); await access(other);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
