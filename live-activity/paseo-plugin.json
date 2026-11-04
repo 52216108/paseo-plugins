@@ -1,0 +1,14 @@
+{
+  "id": "live-activity",
+  "name": "Live Activity push",
+  "description": "Push iOS Live Activity (Dynamic Island / Lock Screen) updates for sessions on this Mac and its connected hosts via APNs while the app is in the background",
+  "translations": {
+    "zh-CN": {
+      "name": "实时活动推送",
+      "description": "App 不在前台时，经 APNs 把本机与已关联机器上的会话状态推送到 iOS 灵动岛 / 锁屏实时活动"
+    }
+  },
+  "requirements": {
+    "paseo": ">=0.15.0"
+  }
+}
