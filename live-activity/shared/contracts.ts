@@ -31,7 +31,8 @@ export const activityUnregister = defineRpc({
 
 export const activityConfigure = defineRpc({
   name: "activity.configure",
-  input: z.object({ teamId: z.string(), keyId: z.string(), p8: z.string() }),
+  // environment 省略 = 两个环境都用这把（兼容旧版 App）；Apple 后台按环境分开建的密钥要指明。
+  input: z.object({ teamId: z.string(), keyId: z.string(), p8: z.string(), environment: z.enum(["development", "production"]).optional() }),
   output: z.object({ configured: z.boolean() }),
 });
 
@@ -44,9 +45,15 @@ export const activityStatus = defineRpc({
   name: "activity.status",
   input: z.object({}),
   output: z.object({
+    // 任一环境配了密钥即为 true；teamId / keyId 是其中一把（先 development），给旧版 App 显示用。
     configured: z.boolean(),
     teamId: z.string().nullable(),
     keyId: z.string().nullable(),
+    // 每个环境的密钥（不含私钥内容）。development = Xcode 直装，production = TestFlight / Ad Hoc / App Store。
+    keys: z.object({
+      development: z.object({ teamId: z.string(), keyId: z.string() }).nullable(),
+      production: z.object({ teamId: z.string(), keyId: z.string() }).nullable(),
+    }),
     devices: z.number(),
     lastPush: lastPushSchema.nullable(),
   }),

@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { buildState, type AgentLite, type HostData } from "../server/summary.ts";
 import { applyResult, decide, settleIdle, ORPHAN_RESTART_MS, ROTATE_AFTER_MS, START_COOLDOWN_MS, REFRESH_MS, type Device } from "../server/decide.ts";
-import { signJwt, validateKey, loadPrivateKey } from "../server/apns.ts";
+import { signJwt, validateKey, loadPrivateKey, ApnsClient } from "../server/apns.ts";
+import { Store } from "../server/store.ts";
+import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const T0 = Date.parse("2026-11-04T10:00:00Z");
 let seq = 0;
@@ -203,4 +207,29 @@ test("JWT：ES256 签名可验证，非法密钥报中文错误且不回显内�
   assert.throws(() => validateKey({ teamId: "TEAM123456", keyId: "KEY1234567", p8: "SECRET-NOT-PEM" }), (e: Error) => /无法解析/.test(e.message) && !e.message.includes("SECRET"));
   const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   assert.throws(() => validateKey({ teamId: "TEAM123456", keyId: "KEY1234567", p8: rsa }), /P-256/);
+});
+
+test("密钥按环境保存：旧格式当两个环境都用，新格式各管各的，文件 0600", async () => {
+  const pem = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const dev = { teamId: "TEAM123456", keyId: "DEVKEY1234", p8: pem };
+  const dir = mkdtempSync(join(tmpdir(), "la-store-"));
+  const store = new Store(dir);
+  writeFileSync(join(dir, "apns-key.json"), JSON.stringify(dev));
+  const legacy = await store.loadKeys();
+  assert.equal(legacy.development?.keyId, "DEVKEY1234");
+  assert.equal(legacy.production?.keyId, "DEVKEY1234");
+  await store.saveKeys({ development: dev });
+  const only = await store.loadKeys();
+  assert.equal(only.development?.keyId, "DEVKEY1234");
+  assert.equal(only.production, undefined);
+  assert.equal(JSON.parse(readFileSync(join(dir, "apns-key.json"), "utf8")).version, 2);
+  assert.equal(statSync(join(dir, "apns-key.json")).mode & 0o777, 0o600);
+  const client = new ApnsClient();
+  client.setKeys(only);
+  assert.equal(client.configuredFor("development"), true);
+  assert.equal(client.configuredFor("production"), false);
+  const result = await client.send("production", "ab".repeat(32), "com.example.app", 5, {});
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /未配置 production/);
+  client.close();
 });

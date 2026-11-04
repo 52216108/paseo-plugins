@@ -51,24 +51,34 @@ export function validateKey(input: ApnsKey): ApnsKey {
   return { teamId, keyId, p8: input.p8.trim() + "\n" };
 }
 
+/** 每个环境一把密钥（Apple 后台按 Sandbox / Production 分开建的密钥各管各的）。 */
+export type ApnsKeys = Partial<Record<Environment, ApnsKey>>;
+
 export class ApnsClient {
-  private key: { config: ApnsKey; object: KeyObject } | null = null;
-  private jwt: { value: string; at: number } | null = null;
+  private keys = new Map<Environment, { config: ApnsKey; object: KeyObject }>();
+  private jwts = new Map<Environment, { value: string; at: number }>();
   private sessions = new Map<Environment, http2.ClientHttp2Session>();
 
-  setKey(config: ApnsKey | null) {
-    this.key = config ? { config, object: loadPrivateKey(config.p8) } : null;
-    this.jwt = null;
+  setKeys(keys: ApnsKeys) {
+    this.keys.clear();
+    this.jwts.clear();
+    for (const env of ["development", "production"] as const) {
+      const config = keys[env];
+      if (config) this.keys.set(env, { config, object: loadPrivateKey(config.p8) });
+    }
   }
 
-  get configured(): boolean { return this.key !== null; }
+  get configured(): boolean { return this.keys.size > 0; }
+  configuredFor(env: Environment): boolean { return this.keys.has(env); }
 
-  private token(nowMs: number): string {
-    if (!this.key) throw new Error("未配置 APNs 密钥");
-    if (!this.jwt || nowMs - this.jwt.at >= JWT_TTL_MS) {
-      this.jwt = { value: signJwt(this.key.object, this.key.config.teamId, this.key.config.keyId, nowMs), at: nowMs };
-    }
-    return this.jwt.value;
+  private token(env: Environment, nowMs: number): string {
+    const key = this.keys.get(env);
+    if (!key) throw new Error(`未配置 ${env} 环境的 APNs 密钥`);
+    const cached = this.jwts.get(env);
+    if (cached && nowMs - cached.at < JWT_TTL_MS) return cached.value;
+    const value = signJwt(key.object, key.config.teamId, key.config.keyId, nowMs);
+    this.jwts.set(env, { value, at: nowMs });
+    return value;
   }
 
   private session(env: Environment): http2.ClientHttp2Session {
@@ -93,7 +103,7 @@ export class ApnsClient {
 
   async send(env: Environment, deviceToken: string, topic: string, priority: number, payload: unknown): Promise<PushResult> {
     let auth: string;
-    try { auth = this.token(Date.now()); } catch (error) {
+    try { auth = this.token(env, Date.now()); } catch (error) {
       return { ok: false, status: null, reason: error instanceof Error ? error.message : String(error) };
     }
     const body = Buffer.from(JSON.stringify(payload));

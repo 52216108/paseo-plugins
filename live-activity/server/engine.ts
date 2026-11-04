@@ -1,7 +1,7 @@
 // 调度：汇总状态 → 去抖 → 按设备决定推送 → 调 APNs → 回写设备记录。
 import type { LastPush, RegisterInput } from "../shared/contracts.ts";
-import { ApnsClient, validateKey, type ApnsKey } from "./apns.ts";
-import { applyResult, decide, settleIdle, type Device } from "./decide.ts";
+import { ApnsClient, validateKey, type ApnsKey, type ApnsKeys } from "./apns.ts";
+import { applyResult, decide, settleIdle, type Device, type Environment } from "./decide.ts";
 import { Sources, type Api } from "./sources.ts";
 import { Store } from "./store.ts";
 import { buildState } from "./summary.ts";
@@ -14,14 +14,15 @@ const short = (token: string) => `${token.slice(0, 8)}…`;
 
 export class LiveActivity {
   private devices = new Map<string, Device>();
-  private key: ApnsKey | null = null;
+  private keys: ApnsKeys = {};
   private apns = new ApnsClient();
   private sources: Sources | null = null;
   private started: Promise<void> | null = null;
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private tick: ReturnType<typeof setInterval> | null = null;
   private chain: Promise<void> = Promise.resolve();
-  private warnedUnconfigured = false;
+  /** 已经提示过「没配这个环境的密钥」的环境，免得每次都打日志。 */
+  private warnedUnconfigured = new Set<Environment>();
   private disposed = false;
   lastPush: LastPush | null = null;
   readonly ready: Promise<void>;
@@ -35,14 +36,22 @@ export class LiveActivity {
       for (const device of await this.store.loadDevices()) this.devices.set(device.deviceId, device);
     } catch (error) { log(`读取设备记录失败：${(error as Error).message}`); }
     try {
-      const key = await this.store.loadKey();
-      if (key) { this.apns.setKey(key); this.key = key; }
+      this.keys = await this.store.loadKeys();
+      this.apns.setKeys(this.keys);
     } catch { log("读取 APNs 密钥失败，按未配置处理"); }
   }
 
   get configured() { return this.apns.configured; }
   get deviceCount() { return this.devices.size; }
-  get keyInfo() { return { teamId: this.key?.teamId ?? null, keyId: this.key?.keyId ?? null }; }
+  configuredFor(env: Environment) { return this.apns.configuredFor(env); }
+  get keyInfo() {
+    const brief = (k?: ApnsKey) => k ? { teamId: k.teamId, keyId: k.keyId } : null;
+    const first = this.keys.development ?? this.keys.production;
+    return {
+      teamId: first?.teamId ?? null, keyId: first?.keyId ?? null,
+      keys: { development: brief(this.keys.development), production: brief(this.keys.production) },
+    };
+  }
 
   /** 第一次拿到 paseo（hook / RPC 回调）时启动数据源订阅。 */
   ensureStarted(paseo: Api): Promise<void> {
@@ -101,9 +110,11 @@ export class LiveActivity {
     if (settleIdle(device, state, now)) await this.persist();
     const steps = decide(device, state, now);
     if (!steps.length) return;
-    if (!this.apns.configured) {
-      if (!this.warnedUnconfigured) log("未配置 APNs 密钥，不推送（App 设置里配置后生效）");
-      this.warnedUnconfigured = true;
+    if (!this.apns.configuredFor(device.environment)) {
+      if (!this.warnedUnconfigured.has(device.environment)) {
+        log(`未配置 ${device.environment} 环境的 APNs 密钥，不给这类设备推送（App 设置里配置后生效）`);
+      }
+      this.warnedUnconfigured.add(device.environment);
       return;
     }
     let dirty = false;
@@ -169,14 +180,18 @@ export class LiveActivity {
     return existed;
   }
 
-  async configure(input: ApnsKey): Promise<void> {
+  /** environment 省略 = 两个环境都用这把（兼容旧版 App）。 */
+  async configure(input: ApnsKey & { environment?: Environment }): Promise<void> {
     await this.ready;
     const key = validateKey(input);
-    await this.store.saveKey(key);
-    this.apns.setKey(key);
-    this.key = key;
-    this.warnedUnconfigured = false;
-    log(`APNs 密钥已配置（Key ID ${key.keyId}）`);
+    const envs: Environment[] = input.environment ? [input.environment] : ["development", "production"];
+    const next: ApnsKeys = { ...this.keys };
+    for (const env of envs) next[env] = key;
+    await this.store.saveKeys(next);
+    this.keys = next;
+    this.apns.setKeys(next);
+    for (const env of envs) this.warnedUnconfigured.delete(env);
+    log(`APNs 密钥已配置（Key ID ${key.keyId}，${envs.join(" + ")}）`);
     this.evaluateAll();
   }
 

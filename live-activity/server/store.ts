@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ApnsKey } from "./apns.ts";
+import type { ApnsKey, ApnsKeys } from "./apns.ts";
 import type { Device } from "./decide.ts";
 
 export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -29,7 +29,8 @@ async function writeSecret(path: string, value: unknown) {
 }
 
 export class Store {
-  constructor(readonly dir: string = dataDir()) {}
+  readonly dir: string;
+  constructor(dir: string = dataDir()) { this.dir = dir; }
 
   private async ensureDir() {
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
@@ -57,14 +58,27 @@ export class Store {
     await writeSecret(join(this.dir, "devices.json"), { version: 1, devices });
   }
 
-  async loadKey(): Promise<ApnsKey | null> {
-    const raw = await readJson(join(this.dir, "apns-key.json")) as Partial<ApnsKey> | null;
-    if (!raw || typeof raw.teamId !== "string" || typeof raw.keyId !== "string" || typeof raw.p8 !== "string") return null;
-    return { teamId: raw.teamId, keyId: raw.keyId, p8: raw.p8 };
+  /** 新格式 {version:2, keys:{development?, production?}}；旧格式（单把 {teamId,keyId,p8}）当作两个环境都用。 */
+  async loadKeys(): Promise<ApnsKeys> {
+    const raw = await readJson(join(this.dir, "apns-key.json")) as Record<string, unknown> | null;
+    if (!raw || typeof raw !== "object") return {};
+    const one = (v: unknown): ApnsKey | undefined => {
+      const k = v as Partial<ApnsKey> | null;
+      return k && typeof k.teamId === "string" && typeof k.keyId === "string" && typeof k.p8 === "string"
+        ? { teamId: k.teamId, keyId: k.keyId, p8: k.p8 } : undefined;
+    };
+    const legacy = one(raw);
+    if (legacy) return { development: legacy, production: legacy };
+    const keys = (raw.keys ?? {}) as Record<string, unknown>;
+    const result: ApnsKeys = {};
+    const dev = one(keys.development), prod = one(keys.production);
+    if (dev) result.development = dev;
+    if (prod) result.production = prod;
+    return result;
   }
 
-  async saveKey(key: ApnsKey) {
+  async saveKeys(keys: ApnsKeys) {
     await this.ensureDir();
-    await writeSecret(join(this.dir, "apns-key.json"), key);
+    await writeSecret(join(this.dir, "apns-key.json"), { version: 2, keys });
   }
 }
