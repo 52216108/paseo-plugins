@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { validModelId } from "../shared/model.ts";
 import type { Message } from "./context.ts";
 import { parseSuggestion } from "./context.ts";
+import { isolatedCodexHome, sourceCodexHome } from "./codex-home.ts";
 
 const instruction = `You predict the user's next message from a conversation.
 Write one short, specific sentence in the user's language and voice. Do not answer questions, perform tasks, or invent facts. Continue the user's current intent when appropriate.
@@ -45,7 +45,8 @@ export function generate(messages: Message[], signal: AbortSignal, cli: string, 
   });
 }
 
-// Codex 没有单独的系统提示参数，说明和对话一起经 stdin 传入；只读沙盒、不加载 MCP、低推理强度。
+// Codex 没有单独的系统提示参数，说明和对话一起经 stdin 传入；只读沙盒、低推理强度。
+// 工具和 MCP 由隔离的 CODEX_HOME 关掉（codex-home.ts），mcp_servers={} 只是多一层保险。
 export function codexArgs(outputFile: string, model = ""): string[] {
   if (model && !validModelId(model)) throw new Error("Invalid model ID");
   return ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never",
@@ -53,24 +54,28 @@ export function codexArgs(outputFile: string, model = ""): string[] {
     "--output-last-message", outputFile, ...(model ? ["--model", model] : []), "-"];
 }
 
-export function generateWithCodex(messages: Message[], signal: AbortSignal, cli: string, model = ""): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new Error("预测已取消"));
-    const outputFile = join(tmpdir(), `next-input-${randomUUID()}.txt`);
-    // 沿用本机 Codex 的登录和配置；上下文经 stdin 传入，不放进进程参数。
-    const child = execFile(cli, codexArgs(outputFile, model), {
-      cwd: homedir(), env: process.env, signal, timeout: 45_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
-    }, async error => {
-      try {
-        if (error) throw new Error("预测失败或超时，请检查本机 Codex 登录和连接");
-        resolve(parseSuggestion(await readFile(outputFile, "utf8")));
-      } catch (e) {
-        reject(e instanceof Error && e.message.includes("Codex") ? e : new Error("模型没有返回有效建议"));
-      } finally {
-        await rm(outputFile, { force: true });
-      }
+export async function generateWithCodex(messages: Message[], signal: AbortSignal, cli: string, model = "",
+  source = sourceCodexHome()): Promise<string> {
+  if (signal.aborted) throw new Error("预测已取消");
+  // 隔离的 CODEX_HOME：只带登录凭据和关掉全部工具的配置，在空目录里运行（不读 AGENTS.md），结束后删除。
+  const isolated = await isolatedCodexHome(source);
+  const outputFile = join(isolated.root, "last-message.txt");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // 上下文经 stdin 传入，不放进进程参数。
+      const child = execFile(cli, codexArgs(outputFile, model), {
+        cwd: isolated.work, env: { ...process.env, CODEX_HOME: isolated.home },
+        signal, timeout: 45_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
+      }, error => error ? reject(new Error("预测失败或超时，请检查本机 Codex 登录和连接")) : resolve());
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(`${instruction}\n\nConversation (JSON):\n${JSON.stringify({ conversation: messages })}`);
     });
-    child.stdin?.on("error", () => {});
-    child.stdin?.end(`${instruction}\n\nConversation (JSON):\n${JSON.stringify({ conversation: messages })}`);
-  });
+    try {
+      return parseSuggestion(await readFile(outputFile, "utf8"));
+    } catch {
+      throw new Error("模型没有返回有效建议");
+    }
+  } finally {
+    await isolated.finish();
+  }
 }
