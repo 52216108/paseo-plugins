@@ -42,8 +42,10 @@ const CONNECTION_KEYS = new Set(["model_provider", "chatgpt_base_url", "forced_c
 
 /**
  * The parts of the user's config.toml that decide where requests go (custom provider, gateway, workspace), so a
- * prediction is sent to the same endpoint as the user's own Codex. Whitelisted line by line: top-level connection
- * keys and whole `[model_providers.*]` tables. Nothing else is copied (`notify`, profiles, projects' trust, MCP…).
+ * prediction is sent to the same endpoint as the user's own Codex. Whitelisted line by line: single-line top-level
+ * connection keys and whole `[model_providers]` / `[model_providers.*]` tables. Nothing else is copied (`notify`,
+ * profiles, projects' trust, MCP…). A provider table may name the user's own credential helper command; that is
+ * what their Codex already runs, not something the conversation can reach.
  */
 export function connectionSettings(userConfig: string): string {
   const top: string[] = [];
@@ -53,17 +55,25 @@ export function connectionSettings(userConfig: string): string {
     const header = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/.exec(line);
     if (header) {
       section = header[1];
-      if (/^model_providers\./.test(section)) tables.push(line);
+      if (/^model_providers(\.|$)/.test(section)) tables.push(line);
       continue;
     }
     if (section === null) {
       const key = /^\s*([A-Za-z0-9_]+)\s*=/.exec(line)?.[1];
-      if (key && CONNECTION_KEYS.has(key)) top.push(line);
-    } else if (/^model_providers\./.test(section)) {
+      // Only values closed on the same line: copying the first line of a multi-line value would break the TOML.
+      if (key && CONNECTION_KEYS.has(key) && closedOnOneLine(line)) top.push(line);
+    } else if (/^model_providers(\.|$)/.test(section)) {
       tables.push(line);
     }
   }
   return [...top, "", ...tables].join("\n").trim();
+}
+
+function closedOnOneLine(line: string): boolean {
+  const value = line.slice(line.indexOf("=") + 1).replace(/#.*$/, "").trim();
+  if (!value || value.startsWith('"""') || value.startsWith("\'\'\'")) return false;
+  const count = (c: string) => value.split(c).length - 1;
+  return count("[") === count("]") && count("{") === count("}") && count('"') % 2 === 0 && count("'") % 2 === 0;
 }
 
 /** The user's Codex home, where the login lives. */
