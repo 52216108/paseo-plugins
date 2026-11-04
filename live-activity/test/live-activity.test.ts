@@ -343,12 +343,14 @@ test("载荷：三种 reason 的 title / body / category，thread-id 与顶层 s
 
   const fin = agent({ id: "ag3", title: "写文档", workspaceId: "w1" });
   const f = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: fin, reason: "finished", workspaces: ws });
-  assert.equal(f.aps.alert.title, "完成 · 写文档");
-  assert.equal(f.aps.alert.body, "宴小助 · 修登录页");
+  // 主标题用工作区名（侧栏行名），副标题是会话标题，正文是项目名 · 机器名
+  assert.equal(f.aps.alert.title, "完成 · 修登录页");
+  assert.equal(f.aps.alert.subtitle, "写文档");
+  assert.equal(f.aps.alert.body, "宴小助 · Studio");
   assert.equal(f.aps.category, "paseo.finished");
   assert.equal(f.aps["thread-id"], "s1:ag3");
-  assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "S", agent: agent({ cwd: "/x/foo" }), reason: "finished" }).aps.alert.body, "foo");
-  assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "S", agent: agent(), reason: "finished" }).aps.alert.body, "回合已结束");
+  assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "S", agent: agent({ cwd: "/x/foo" }), reason: "finished" }).aps.alert.body, "foo · S");
+  assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "", agent: agent(), reason: "finished" }).aps.alert.body, "回合已结束");
 });
 
 test("请求头：alert 用 bundleId 作 topic、优先级 10、collapse-id 超 64 字节省略；灵动岛不变", () => {

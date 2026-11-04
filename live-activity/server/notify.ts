@@ -85,7 +85,11 @@ export function buildAlertPayload(input: {
   requestId?: string;
 }): AlertPayload {
   const { serverId, agent, reason } = input;
-  const name = nonEmpty(agent.title) ?? "会话";
+  // 主标题用侧栏的行名（工作区标题，没有才用会话标题）；副标题是会话标题，和主标题一样时改写机器名。
+  const workspaceTitle = agent.workspaceId ? nonEmpty(input.workspaces?.get(agent.workspaceId)?.title) : null;
+  const agentTitle = nonEmpty(agent.title);
+  const name = workspaceTitle ?? agentTitle ?? "会话";
+  const subtitle = agentTitle && agentTitle !== name ? agentTitle : input.hostLabel;
   let title: string, body: string;
   if (reason === "permission") {
     title = `需要你批准 · ${name}`;
@@ -98,12 +102,11 @@ export function buildAlertPayload(input: {
   } else {
     title = `完成 · ${name}`;
     const project = projectName(agent, input.workspaces);
-    const workspaceTitle = agent.workspaceId ? nonEmpty(input.workspaces?.get(agent.workspaceId)?.title) : null;
-    body = [project, workspaceTitle].filter(Boolean).join(" · ") || "回合已结束";
+    body = [project, input.hostLabel].filter(Boolean).join(" · ") || "回合已结束";
   }
   return {
     aps: {
-      alert: { title, subtitle: input.hostLabel, body },
+      alert: { title, subtitle, body },
       sound: "default",
       category: reason === "permission" ? "paseo.permission" : "paseo.finished",
       "thread-id": `${serverId}:${agent.id}`,
