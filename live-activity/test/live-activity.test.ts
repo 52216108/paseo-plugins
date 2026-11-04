@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { buildState, type AgentLite, type HostData } from "../server/summary.ts";
-import { applyResult, decide, ROTATE_AFTER_MS, START_COOLDOWN_MS, REFRESH_MS, type Device } from "../server/decide.ts";
+import { applyResult, decide, settleIdle, ORPHAN_RESTART_MS, ROTATE_AFTER_MS, START_COOLDOWN_MS, REFRESH_MS, type Device } from "../server/decide.ts";
 import { signJwt, validateKey, loadPrivateKey } from "../server/apns.ts";
 
 const T0 = Date.parse("2026-11-04T10:00:00Z");
@@ -104,7 +104,36 @@ test("活跃且无 activityToken：推 start 到 push-to-start，带 attributes 
   assert.equal(d.lastStartAt, T0);
   assert.equal(d.activityStartedAt, T0);
   assert.deepEqual(decide(d, running(3), T0 + START_COOLDOWN_MS - 1), []);
-  assert.equal(decide(d, running(3), T0 + START_COOLDOWN_MS)[0].kind, "start");
+  // start 成功但令牌一直没报回来：不每 2 分钟重发，1 小时后才再试。
+  assert.deepEqual(decide(d, running(3), T0 + START_COOLDOWN_MS), []);
+  assert.equal(decide(d, running(3), T0 + ORPHAN_RESTART_MS)[0].kind, "start");
+});
+
+test("start 失败：2 分钟后重试", () => {
+  const d = device();
+  const [step] = decide(d, running(1), T0);
+  applyResult(d, step, { ok: false, status: 500, reason: "InternalServerError" }, T0);
+  assert.deepEqual(decide(d, running(1), T0 + START_COOLDOWN_MS - 1), []);
+  assert.equal(decide(d, running(1), T0 + START_COOLDOWN_MS)[0].kind, "start");
+});
+
+test("轮换时 end 成功、start 失败：2 分钟后重试，不当成令牌没报回", () => {
+  const d = device({ activityToken: "ab".repeat(32), activityStartedAt: T0 - ROTATE_AFTER_MS });
+  const [end, start] = decide(d, running(1), T0);
+  assert.equal(end.kind, "end");
+  assert.equal(start.kind, "start");
+  applyResult(d, end, { ok: true, status: 200, reason: null }, T0);
+  applyResult(d, start, { ok: false, status: 429, reason: "TooManyRequests" }, T0);
+  assert.equal(decide(d, running(1), T0 + START_COOLDOWN_MS)[0].kind, "start");
+});
+
+test("没有令牌时全部结束：归为空闲，下次有会话开始立刻 start", () => {
+  const d = device();
+  const [step] = decide(d, running(1), T0);
+  applyResult(d, step, { ok: true, status: 200, reason: null }, T0);
+  assert.equal(settleIdle(d, idle(), T0 + 1000), true);
+  assert.equal(settleIdle(d, idle(), T0 + 2000), false);
+  assert.equal(decide(d, running(1), T0 + 3000)[0].kind, "start");
 });
 
 test("活跃且有 activityToken：内容变化推 update（priority 5），未变化不推，10 分钟保活", () => {

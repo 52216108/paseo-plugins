@@ -36,6 +36,8 @@ export interface PushStep {
 export const START_COOLDOWN_MS = 2 * 60 * 1000;
 export const REFRESH_MS = 10 * 60 * 1000;
 export const ROTATE_AFTER_MS = (7 * 60 + 45) * 60 * 1000;
+/** start 成功了但 App 一直没报回活动令牌（手机在后台没连上 Mac）：这么久之后才再 start，免得每 2 分钟堆一个重复活动。 */
+export const ORPHAN_RESTART_MS = 60 * 60 * 1000;
 export const STALE_AFTER_SEC = 900;
 export const DISMISS_AFTER_SEC = 300;
 export const ATTRIBUTES_TYPE = "PaseoActivityAttributes";
@@ -124,9 +126,27 @@ export function decide(device: Device, state: ContentState, nowMs: number): Push
     return steps;
   }
 
+  // 已经 start 过、活动大概还在，只是令牌没报回来：等久一点再试。
+  // activityStartedAt 只在 start 成功时置上、活动结束或令牌清除时清掉，所以 start 失败不会被当成这种情况。
+  const orphan = device.activityStartedAt !== null;
+  if (orphan && nowMs - (device.lastStartAt ?? 0) < ORPHAN_RESTART_MS) return steps;
   const start = startStep();
   if (start) steps.push(start);
   return steps;
+}
+
+/**
+ * 全部结束、手上又没有活动令牌（推不了 end）时，把记录归为「空闲」，下次有会话开始能立刻 start。
+ * 返回 true 表示记录有变化需要持久化。
+ */
+export function settleIdle(device: Device, state: ContentState, nowMs: number): boolean {
+  if (isActive(state) || device.activityToken) return false;
+  if (!device.lastSent || !isActive(device.lastSent.state)) return false;
+  device.lastSent = { state, at: nowMs };
+  device.lastSentWaiting = 0;
+  device.lastStartAt = null;
+  device.activityStartedAt = null;
+  return true;
 }
 
 export interface PushResult { ok: boolean; status: number | null; reason: string | null }

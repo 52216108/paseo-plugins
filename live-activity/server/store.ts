@@ -1,6 +1,7 @@
 // 持久化：<PASEO_HOME 或 ~/.paseo>/live-activity/ 下的 devices.json 与 apns-key.json（均 0600）。
 // 不放进插件 settings：settings 会被客户端读到。
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ApnsKey } from "./apns.ts";
@@ -21,7 +22,7 @@ async function readJson(path: string): Promise<unknown> {
 
 /** 先写临时文件（0600）再改名，避免写一半被读到。 */
 async function writeSecret(path: string, value: unknown) {
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
   await chmod(tmp, 0o600);
   await rename(tmp, path);

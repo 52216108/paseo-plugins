@@ -1,7 +1,7 @@
 // 调度：汇总状态 → 去抖 → 按设备决定推送 → 调 APNs → 回写设备记录。
 import type { LastPush, RegisterInput } from "../shared/contracts.ts";
 import { ApnsClient, validateKey, type ApnsKey } from "./apns.ts";
-import { applyResult, decide, type Device } from "./decide.ts";
+import { applyResult, decide, settleIdle, type Device } from "./decide.ts";
 import { Sources, type Api } from "./sources.ts";
 import { Store } from "./store.ts";
 import { buildState } from "./summary.ts";
@@ -97,7 +97,9 @@ export class LiveActivity {
     // 一台机器的数据都还没拿到时不能据此结束活动。
     if (!hosts.some(h => h.agents)) return;
     const now = Date.now();
-    const steps = decide(device, buildState(hosts, now / 1000), now);
+    const state = buildState(hosts, now / 1000);
+    if (settleIdle(device, state, now)) await this.persist();
+    const steps = decide(device, state, now);
     if (!steps.length) return;
     if (!this.apns.configured) {
       if (!this.warnedUnconfigured) log("未配置 APNs 密钥，不推送（App 设置里配置后生效）");
@@ -138,7 +140,11 @@ export class LiveActivity {
     // 字段省略 = 保持原值；null = 清除。
     if (input.pushToStartToken !== undefined) device.pushToStartToken = input.pushToStartToken;
     if (input.activityToken !== undefined) {
-      if (input.activityToken === null) device.activityStartedAt = null;
+      if (input.activityToken === null) {
+        // App 那边活动结束了（本地结束或被用户划掉）：下次有会话开始就能重新 start。
+        device.activityStartedAt = null;
+        if (device.activityToken) { device.lastSent = null; device.lastSentWaiting = 0; device.lastStartAt = null; }
+      }
       else if (input.activityToken !== device.activityToken) device.activityStartedAt = now;
       device.activityToken = input.activityToken;
     }
@@ -146,7 +152,8 @@ export class LiveActivity {
     await this.persist();
     log(`设备 ${device.deviceId.slice(0, 8)} 已登记（${device.environment}，机器 ${device.hosts.length} 台，`
       + `activity ${device.activityToken ? short(device.activityToken) : "无"}，push-to-start ${device.pushToStartToken ? short(device.pushToStartToken) : "无"}）`);
-    await this.sources?.sync(this.allHosts());
+    // 不等新机器连上再回复（连不上时要等几十秒，App 会当作超时）；数据到了订阅会触发重算。
+    void this.sources?.sync(this.allHosts()).catch(error => log(`同步机器失败：${(error as Error).message}`));
     // 注册后立即按当前状态推一次（如需要）。
     this.enqueue(() => this.evaluate(device));
   }
