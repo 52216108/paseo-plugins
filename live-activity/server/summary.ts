@@ -1,5 +1,4 @@
 // 纯函数：把各机器的会话汇总成实时活动的 content-state（规则与 App 端 LiveActivityController.snapshot 一致）。
-import { safeStringify } from "./preview.ts";
 
 /** 汇总只用到的会话字段（来自 AgentSnapshotPayload）。 */
 export interface AgentLite {
