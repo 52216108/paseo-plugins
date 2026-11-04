@@ -10,23 +10,35 @@ export const ALERT_MAX_AGE_MS = 120_000;
 
 export interface AlertEvent { agent: AgentLite; reason: AlertReason; timestamp: string }
 
-/** 数据源按 agentId 记「已通知过（或已作为基线见过）的 attentionTimestamp」。 */
-export type NotifiedMap = Map<string, string | null>;
+/** 数据源按 agentId 记已通知过（或已作为基线见过）的 attentionTimestamp 与待批准请求 id。 */
+export interface Seen { ts: string | null; perms: string[] }
+export type NotifiedMap = Map<string, Seen>;
+
+const permIds = (agent: AgentLite) => agent.pendingPermissions.map((p, i) => p.id ?? `#${i}`);
+const seenOf = (agent: AgentLite): Seen => ({ ts: agent.attentionTimestamp ?? null, perms: permIds(agent) });
 
 /**
- * 判定一次增量变化要不要发通知，并记下这次见到的时间戳（同一时间戳只发一次）。
+ * 判定一次增量变化要不要发通知，并记下这次见到的状态（同一时间戳 / 同一权限请求只发一次）。
+ * - 需要批准：daemon 不会为权限请求设置 attention（只广播事件），所以按「出现了新的待批准请求 id」判定，
+ *   和 daemon 自己判断「刚有权限请求」的方式一致。
+ * - 完成 / 出错：按 requiresAttention + attentionReason + attentionTimestamp 变化判定。
  * agents 是这台机器当前的会话表（用于判断嵌套子会话）。
  */
 export function checkAlert(
   agent: AgentLite, serverId: string, agents: ReadonlyMap<string, AgentLite>, notified: NotifiedMap, nowMs: number,
 ): AlertEvent | null {
-  const ts = agent.attentionTimestamp ?? null;
-  const seen = notified.has(agent.id) ? notified.get(agent.id) : undefined;
-  notified.set(agent.id, ts);
-  if (!agent.requiresAttention || !ts || ts === seen) return null;
-  const reason = agent.attentionReason;
-  if (!reason || !REASONS.has(reason)) return null;
+  const prev = notified.get(agent.id);
+  const now = seenOf(agent);
+  notified.set(agent.id, now);
   if (agent.archivedAt || isNested(agent, serverId, agents)) return null;
+  // 第一次见到这个会话（例如新建后立刻就要批准）：之前没有请求，按空集合比较。
+  const newPerm = now.perms.find(id => !(prev?.perms ?? []).includes(id));
+  if (newPerm !== undefined) return { agent, reason: "permission", timestamp: `perm:${newPerm}` };
+  const ts = now.ts;
+  if (!agent.requiresAttention || !ts || ts === (prev?.ts ?? undefined)) return null;
+  const reason = agent.attentionReason;
+  // permission 已按待批准请求处理，这里不再重复。
+  if (!reason || !REASONS.has(reason) || reason === "permission") return null;
   const at = Date.parse(ts);
   if (!Number.isFinite(at) || nowMs - at >= ALERT_MAX_AGE_MS) return null;
   return { agent, reason: reason as AlertReason, timestamp: ts };
@@ -42,7 +54,7 @@ export function scanAlerts(
   const events: AlertEvent[] = [];
   for (const id of [...notified.keys()]) if (!agents.has(id)) notified.delete(id);
   for (const agent of agents.values()) {
-    if (baseline) { notified.set(agent.id, agent.attentionTimestamp ?? null); continue; }
+    if (baseline) { notified.set(agent.id, seenOf(agent)); continue; }
     const event = checkAlert(agent, serverId, agents, notified, nowMs);
     if (event) events.push(event);
   }

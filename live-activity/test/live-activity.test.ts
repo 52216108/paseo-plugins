@@ -298,7 +298,7 @@ test("通知判定：超过 120 秒不发；子会话、归档不发", () => {
   const notified: NotifiedMap = new Map();
   const old = attn("error", T0 - ALERT_MAX_AGE_MS, { id: "old" });
   const parent = agent({ id: "par" });
-  const child = attn("permission", T0 - 1000, { id: "kid", labels: { "paseo.parent-agent-id": "par" } });
+  const child = agent({ id: "kid", labels: { "paseo.parent-agent-id": "par" }, pendingPermissions: [{ id: "rk" }] });
   const archived = attn("finished", T0 - 1000, { id: "arc", archivedAt: iso(T0) });
   const list = new Map([old, parent, child, archived].map(x => [x.id, x]));
   for (const x of [old, child, archived]) assert.equal(checkAlert(x, "s1", list, notified, T0), null);
@@ -311,7 +311,7 @@ test("轮询：只有第一份列表是基线，之后与上一份对比", () =>
   const notified: NotifiedMap = new Map();
   const a = agent({ id: "p1" });
   assert.deepEqual(scanAlerts(new Map([[a.id, a]]), "s1", notified, T0, true), []);
-  const b = attn("permission", T0 - 2000, { id: "p1" });
+  const b = agent({ id: "p1", pendingPermissions: [{ id: "r1", title: "运行 npm test" }] });
   const events = scanAlerts(new Map([[b.id, b]]), "s1", notified, T0, false);
   assert.deepEqual(events.map(e => e.agent.id), ["p1"]);
   assert.deepEqual(scanAlerts(new Map([[b.id, b]]), "s1", notified, T0 + 30_000, false), []);
@@ -399,4 +399,29 @@ test("有 alertToken 时灵动岛 waiting 增加的 update 仍 priority 10 但�
   const [start] = decide(device({ alertToken: "ef".repeat(32) }), state, T0);
   assert.equal(start.kind, "start");
   assert.deepEqual(start.payload.aps.alert, { title: "需要你处理", body: "修登录页", sound: "default" });
+});
+
+test("需要批准按新出现的待批准请求判定（daemon 不为权限请求设置 attention）", () => {
+  const notified: NotifiedMap = new Map();
+  const idle = agent({ id: "q1", status: "running" });
+  const list = new Map([[idle.id, idle]]);
+  scanAlerts(list, "s1", notified, T0, true);
+  // 只有 attentionReason=permission、没有待批准请求：不按权限发（真实 daemon 不会这样，旧记录遗留）
+  assert.equal(checkAlert(attn("permission", T0 - 1000, { id: "q1" }), "s1", list, notified, T0), null);
+  const one = agent({ id: "q1", status: "running", pendingPermissions: [{ id: "r1", title: "运行 npm test" }] });
+  const e1 = checkAlert(one, "s1", list, notified, T0);
+  assert.equal(e1?.reason, "permission");
+  assert.equal(e1?.timestamp, "perm:r1");
+  // 同一请求再来一次 upsert 不重复
+  assert.equal(checkAlert(one, "s1", list, notified, T0 + 1000), null);
+  // 又多了一个新请求：再发
+  const two = agent({ id: "q1", status: "running", pendingPermissions: [{ id: "r1" }, { id: "r2" }] });
+  assert.equal(checkAlert(two, "s1", list, notified, T0 + 2000)?.timestamp, "perm:r2");
+  // 请求被处理掉后完成：按完成发
+  const done = attn("finished", T0 + 3000, { id: "q1" });
+  assert.equal(checkAlert(done, "s1", list, notified, T0 + 3500)?.reason, "finished");
+  // 基线里已有的待批准请求不发
+  const n2: NotifiedMap = new Map();
+  scanAlerts(new Map([[one.id, one]]), "s1", n2, T0, true);
+  assert.equal(checkAlert(one, "s1", list, n2, T0), null);
 });

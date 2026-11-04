@@ -20,7 +20,7 @@ export interface AgentLite {
 }
 
 /** 权限请求只留通知要用的字段。 */
-export interface PermissionLite { title?: string | null; name?: string | null; kind?: string | null }
+export interface PermissionLite { id?: string | null; title?: string | null; name?: string | null; kind?: string | null }
 
 export interface HostRef { serverId: string; label: string }
 
@@ -63,6 +63,7 @@ export function toLite(agent: AgentLite): AgentLite {
     title: agent.title ?? null,
     status: agent.status,
     pendingPermissions: (agent.pendingPermissions ?? []).map(p => ({
+      id: typeof p?.id === "string" ? p.id : null,
       title: typeof p?.title === "string" ? p.title : null,
       name: typeof p?.name === "string" ? p.name : null,
       kind: typeof p?.kind === "string" ? p.kind : null,
