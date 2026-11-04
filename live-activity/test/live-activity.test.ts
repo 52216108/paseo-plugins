@@ -536,24 +536,22 @@ test("最后一条回复：拼接时间线末尾连续的 assistant_message 片�
   assert.equal(latestReplyFromEntries([]), null);
 });
 
-test("权限说明：title 与 description 用 - 拼，相同只留一个；否则 input JSON，再否则 name / kind", () => {
+test("权限说明：title 与 description 用 - 拼，相同只留一个；否则 name / kind，不放工具输入", () => {
   assert.equal(buildPermissionDetails({ title: "运行命令", description: "npm test" }), "运行命令 - npm test");
   assert.equal(buildPermissionDetails({ title: "运行命令", description: " 运行命令 " }), "运行命令");
   assert.equal(buildPermissionDetails({ description: "只有描述" }), "只有描述");
-  assert.equal(buildPermissionDetails({ inputJson: '{"command":"ls"}', name: "Bash" }), '{"command":"ls"}');
   assert.equal(buildPermissionDetails({ name: " Bash ", kind: "tool" }), "Bash");
   assert.equal(buildPermissionDetails({ kind: "tool" }), "tool");
   assert.equal(buildPermissionDetails(null), null);
-  // toLite 存 description 与 input 的 JSON（截到 300 字），不持有原始对象
+  // toLite 存 description（截到 300 字），不保留工具输入
   const lite = toLite({ ...agent({ id: "pl" }), pendingPermissions: [{ id: "r1", name: "Bash", kind: "tool", description: "d".repeat(400), input: { command: "x".repeat(400) } }] } as unknown as AgentLite);
   const perm = lite.pendingPermissions[0];
   assert.equal(perm.description?.length, 300);
-  assert.equal(perm.inputJson?.length, 300);
-  assert.ok(perm.inputJson?.startsWith('{"command":"xxx'));
   assert.equal("input" in perm, false);
   const noText = toLite({ ...agent({ id: "pl2" }), pendingPermissions: [{ id: "r1", name: "Bash", kind: "tool", input: { command: "ls  -la" } }] } as unknown as AgentLite);
   const p = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: noText, reason: "permission", requestId: "r1" });
-  assert.equal(p.aps.alert.body, '{"command":"ls -la"}');
+  assert.equal(p.aps.alert.body, "Bash");
+  assert.equal(JSON.stringify(p).includes("ls"), false);
 });
 
 test("载荷：完成用最后回复的预览作正文，无 subtitle；取不到回复退回项目名 · 机器名；出错折叠空白", () => {
@@ -568,4 +566,13 @@ test("载荷：完成用最后回复的预览作正文，无 subtitle；取不�
   assert.deepEqual(err.aps.alert, { title: "出错了 · 修登录页", body: "连接 失败 了" });
   const perm = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: { ...fin, pendingPermissions: [{ id: "r1", title: "编辑文件", description: "src/a.ts" }] }, reason: "permission", requestId: "r1", workspaces: ws });
   assert.deepEqual(perm.aps.alert, { title: "需要你批准 · 修登录页", body: "编辑文件 - src/a.ts" });
+});
+
+test("预览：超长输入先截短，超长空白不卡", () => {
+  const start = Date.now();
+  const long = " ".repeat(200_000) + "x";
+  assert.equal(buildNotificationPreview(long), null);
+  const big = "正文".repeat(50_000);
+  assert.equal(Array.from(buildNotificationPreview(big) ?? "").length, 220);
+  assert.ok(Date.now() - start < 1000);
 });

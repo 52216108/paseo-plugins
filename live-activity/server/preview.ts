@@ -17,19 +17,22 @@ export function truncateNotificationText(text: string, limit: number): string {
 }
 
 /** 去掉 Markdown 标记，保留文字（代码块保留内容、链接保留文字）。 */
+/** 处理前先截到这么长：通知只显示 220 字，超长回复不必整段跑正则（也避免超长空白造成大量回溯）。 */
+export const PREVIEW_INPUT_MAX_CHARS = 4000;
+
 export function stripMarkdownToText(markdown: string): string {
-  let text = markdown.replace(/\r\n/g, "\n");
-  // 代码围栏行去掉，代码本身保留。
-  text = text.replace(/^\s*```[^\n]*$/gm, "");
-  text = text.replace(/^\s*~~~[^\n]*$/gm, "");
+  let text = Array.from(markdown).slice(0, PREVIEW_INPUT_MAX_CHARS).join("").replace(/\r\n/g, "\n");
+  // 代码围栏行去掉，代码本身保留（行首只认空格 / 制表符，不跨行匹配）。
+  text = text.replace(/^[ \t]*```[^\n]*$/gm, "");
+  text = text.replace(/^[ \t]*~~~[^\n]*$/gm, "");
   // 图片 / 链接。
   text = text.replace(/!\[([^\]]*)\]\((?:[^()\\]|\\.)*\)/g, "$1");
   text = text.replace(/\[([^\]]+)\]\((?:[^()\\]|\\.)*\)/g, "$1");
   // 行首结构：标题、引用、列表、分隔线。
-  text = text.replace(/^\s{0,3}#{1,6}\s+/gm, "");
-  text = text.replace(/^\s{0,3}>+\s?/gm, "");
-  text = text.replace(/^\s{0,3}(?:[*+-]|\d+\.)\s+/gm, "");
-  text = text.replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gm, "");
+  text = text.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "");
+  text = text.replace(/^[ \t]{0,3}>+[ \t]?/gm, "");
+  text = text.replace(/^[ \t]{0,3}(?:[*+-]|\d+\.)[ \t]+/gm, "");
+  text = text.replace(/^[ \t]{0,3}(?:[-*_][ \t]*){3,}$/gm, "");
   // 行内标记。
   text = text.replace(/`([^`]+)`/g, "$1");
   text = text.replace(/\*\*([^*]+)\*\*/g, "$1");
@@ -59,12 +62,11 @@ export function safeStringify(value: unknown): string | null {
 }
 
 /**
- * 权限请求的说明：title 与 description（不同时）用 " - " 拼；都没有就用 input 的 JSON，再没有用 metadata 的 JSON，
- * 最后用 name / kind。inputJson / metadataJson 是已序列化（并截短）的 JSON，插件不长期持有原始对象。
+ * 权限请求的说明：title 与 description（不同时）用 " - " 拼；都没有就用工具名 / kind。
+ * 与官方不同：不退回工具输入 / 元数据的 JSON（可能含令牌等敏感内容，会经 Apple 推送服务器显示在锁屏上）。
  */
 export function buildPermissionDetails(request: {
   title?: string | null; description?: string | null; name?: string | null; kind?: string | null;
-  inputJson?: string | null; metadataJson?: string | null;
 } | null | undefined): string | null {
   if (!request) return null;
   const title = request.title?.trim();
@@ -73,8 +75,6 @@ export function buildPermissionDetails(request: {
   if (title) details.push(title);
   if (description && description !== title) details.push(description);
   if (details.length > 0) return details.join(" - ");
-  if (request.inputJson) return request.inputJson;
-  if (request.metadataJson) return request.metadataJson;
   return request.name?.trim() || request.kind || null;
 }
 

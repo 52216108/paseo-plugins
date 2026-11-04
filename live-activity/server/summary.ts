@@ -24,8 +24,6 @@ export interface AgentLite {
 export interface PermissionLite {
   id?: string | null; title?: string | null; name?: string | null; kind?: string | null;
   description?: string | null;
-  /** input / metadata 序列化后的 JSON（截短），只用于通知正文。 */
-  inputJson?: string | null; metadataJson?: string | null;
 }
 
 export interface HostRef { serverId: string; label: string }
@@ -87,16 +85,13 @@ export function toLite(agent: AgentLite): AgentLite {
 
 const textOrNull = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
-/** 原始对象（有值）序列化成截短的 JSON；空值或序列化失败为 null。 */
-function jsonPreview(value: unknown): string | null {
-  if (!value || typeof value !== "object") return null;
-  const json = safeStringify(value);
-  return json ? clipChars(json, PERMISSION_TEXT_MAX_CHARS) : null;
-}
 
-/** 已是精简形状（inputJson 等）的保持不变，原始快照（input / metadata 对象）转成截短的 JSON。 */
+/**
+ * 只留通知要用的字段。工具输入 / 元数据（input / metadata）不保留：可能含命令里的令牌等敏感内容，
+ * 不能经 Apple 推送服务器发到锁屏上。
+ */
 function toPermissionLite(raw: unknown): PermissionLite {
-  const p = (raw ?? {}) as PermissionLite & { input?: unknown; metadata?: unknown };
+  const p = (raw ?? {}) as PermissionLite;
   const description = textOrNull(p.description);
   return {
     id: textOrNull(p.id),
@@ -104,8 +99,6 @@ function toPermissionLite(raw: unknown): PermissionLite {
     name: textOrNull(p.name),
     kind: textOrNull(p.kind),
     description: description === null ? null : clipChars(description, PERMISSION_TEXT_MAX_CHARS),
-    inputJson: textOrNull(p.inputJson) ?? jsonPreview(p.input),
-    metadataJson: textOrNull(p.metadataJson) ?? jsonPreview(p.metadata),
   };
 }
 
