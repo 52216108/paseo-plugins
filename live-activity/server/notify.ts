@@ -1,5 +1,6 @@
 // 纯函数：普通通知（APNs push-type alert）——何时发（沿用 daemon 的提醒信号）与载荷构造。
 import type { Environment } from "./decide.ts";
+import { buildNotificationPreview, buildPermissionDetails, normalizeNotificationText } from "./preview.ts";
 import { clipChars, ERROR_MAX_CHARS, isNested, projectName, type AgentLite, type WorkspaceInfo } from "./summary.ts";
 
 export type AlertReason = "finished" | "error" | "permission";
@@ -64,7 +65,7 @@ export function scanAlerts(
 
 export interface AlertPayload {
   aps: {
-    alert: { title: string; subtitle: string; body: string };
+    alert: { title: string; body: string };
     sound: "default";
     category: "paseo.permission" | "paseo.finished";
     "thread-id": string;
@@ -78,35 +79,40 @@ export interface AlertPayload {
 
 const nonEmpty = (v: string | null | undefined): string | null => (v && v.trim() ? v : null);
 
-/** 构造通知载荷（App 的点击 / 按钮处理读顶层 serverId、agentId）。hostLabel 是该设备登记时给这台机器起的名字。 */
+/**
+ * 构造通知载荷（App 的点击 / 按钮处理读顶层 serverId、agentId）。hostLabel 是该设备登记时给这台机器起的名字。
+ * 没有副标题；正文同官方 App：完成 = 会话最后一条回复的预览（assistantMessage，取不到时退回「项目名 · 机器名」），
+ * 需要批准 = 那个权限请求的说明预览，出错 = lastError（折叠空白、截到 200 字）。
+ */
 export function buildAlertPayload(input: {
   serverId: string; hostLabel: string; agent: AgentLite; reason: AlertReason;
   workspaces?: ReadonlyMap<string, WorkspaceInfo>;
   requestId?: string;
+  /** 仅 finished：会话最后一条回复（原文，未处理）；null / 省略 = 没取到。 */
+  assistantMessage?: string | null;
 }): AlertPayload {
   const { serverId, agent, reason } = input;
-  // 主标题用侧栏的行名（工作区标题，没有才用会话标题）；副标题是会话标题，和主标题一样时改写机器名。
+  // 主标题用侧栏的行名（工作区标题，没有才用会话标题）。
   const workspaceTitle = agent.workspaceId ? nonEmpty(input.workspaces?.get(agent.workspaceId)?.title) : null;
-  const agentTitle = nonEmpty(agent.title);
-  const name = workspaceTitle ?? agentTitle ?? "会话";
-  const subtitle = agentTitle && agentTitle !== name ? agentTitle : input.hostLabel;
+  const name = workspaceTitle ?? nonEmpty(agent.title) ?? "会话";
   let title: string, body: string;
   if (reason === "permission") {
     title = `需要你批准 · ${name}`;
     const first = agent.pendingPermissions.find(p => input.requestId !== undefined && p.id === input.requestId) ?? agent.pendingPermissions[0];
-    body = nonEmpty(first?.title) ?? nonEmpty(first?.name) ?? "有一个权限请求等你处理";
+    body = buildNotificationPreview(buildPermissionDetails(first)) ?? "有一个权限请求等你处理";
   } else if (reason === "error") {
     title = `出错了 · ${name}`;
-    const error = nonEmpty(agent.lastError);
+    const error = agent.lastError ? normalizeNotificationText(agent.lastError) : "";
     body = error ? clipChars(error, ERROR_MAX_CHARS) : "会话出错";
   } else {
     title = `完成 · ${name}`;
     const project = projectName(agent, input.workspaces);
-    body = [project, input.hostLabel].filter(Boolean).join(" · ") || "回合已结束";
+    body = buildNotificationPreview(input.assistantMessage)
+      ?? ([project, input.hostLabel].filter(Boolean).join(" · ") || "回合已结束");
   }
   return {
     aps: {
-      alert: { title, subtitle, body },
+      alert: { title, body },
       sound: "default",
       category: reason === "permission" ? "paseo.permission" : "paseo.finished",
       "thread-id": `${serverId}:${agent.id}`,

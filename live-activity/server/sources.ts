@@ -1,6 +1,7 @@
 // 各机器会话数据源：本机与已关联机器（connected hosts）都先尝试订阅，订阅失败或中断就降级为每 30 秒轮询。
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { checkAlert, scanAlerts, type AlertEvent, type NotifiedMap } from "./notify.ts";
+import { latestReplyFromEntries } from "./preview.ts";
 import { toLite, type AgentLite, type HostData, type HostRef, type WorkspaceInfo } from "./summary.ts";
 
 export type Api = PluginHandlerContext["paseo"];
@@ -11,6 +12,9 @@ const LIST_OPTIONS = { filter: { includeArchived: false }, page: { limit: 200 } 
 const POLL_MS = 30_000;
 const CONNECT_TIMEOUT_MS = 20_000;
 const MAX_PAGES = 10;
+/** 取会话最后一条回复（通知正文）的超时。 */
+const REPLY_TIMEOUT_MS = 5_000;
+const REPLY_TIMELINE_LIMIT = 50;
 /** 遇到不认识的工作区 ID 时补拉工作区列表的最短间隔。 */
 const WORKSPACE_REFRESH_MS = 10_000;
 
@@ -58,6 +62,9 @@ export class AgentSource {
   constructor(private readonly opts: SourceOptions) {}
 
   get serverId() { return this.opts.serverId; }
+
+  /** 当前持有的连接（本机是 paseo 本身，远程是 hosts.client 拿到的）；离线 / 重连中为 null。 */
+  get currentApi(): Api | null { return this.api; }
 
   async start() {
     try {
@@ -266,6 +273,20 @@ export class Sources {
       started.push(source.start());
     }
     await Promise.all(started);
+  }
+
+  /**
+   * 会话最后一条回复（时间线末尾连续的 assistant_message 拼接），用作「完成」通知正文。
+   * 取不到（没连接、出错、超时 5 秒）抛错，由调用方退回原正文。
+   */
+  async lastReply(serverId: string, agentId: string): Promise<string | null> {
+    const api = this.sources.get(serverId)?.currentApi;
+    if (!api) throw new Error("这台机器当前没有连接");
+    const page = await withTimeout(
+      api.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: REPLY_TIMELINE_LIMIT, projection: "projected" }),
+      REPLY_TIMEOUT_MS, "拉取最后回复");
+    if (page.error) throw new Error(page.error);
+    return latestReplyFromEntries(page.entries ?? []);
   }
 
   hostData(host: HostRef): HostData {

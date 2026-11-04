@@ -156,9 +156,24 @@ export class LiveActivity {
       .catch(error => log(`发送通知出错：${(error as Error).message}`));
   }
 
+  /** 「完成」通知正文用会话最后一条回复；取不到返回 null（退回原正文，照常发通知）。 */
+  private async lastReply(serverId: string, agentId: string): Promise<string | null> {
+    try {
+      return await this.sources?.lastReply(serverId, agentId) ?? null;
+    } catch (error) {
+      log(`取会话 ${agentId.slice(0, 8)} 最后回复失败，正文退回项目名：${(error as Error).message}`);
+      return null;
+    }
+  }
+
   private async sendAlerts(serverId: string, event: AlertEvent, workspaces: ReadonlyMap<string, WorkspaceInfo>) {
     let dirty = false;
-    for (const { device, hostLabel } of alertTargets(this.devices.values(), serverId)) {
+    const targets = alertTargets(this.devices.values(), serverId);
+    // 有设备真的会收到时才去取最后回复（所有设备共用一次）。
+    const sendable = targets.some(t => this.apns.configuredFor(t.device.environment));
+    const assistantMessage = event.reason === "finished" && sendable ? await this.lastReply(serverId, event.agent.id) : null;
+    if (this.disposed) return;
+    for (const { device, hostLabel } of targets) {
       if (this.disposed) return;
       const token = device.alertToken;
       if (!token) continue;
@@ -169,7 +184,7 @@ export class LiveActivity {
         this.warnedUnconfigured.add(device.environment);
         continue;
       }
-      const payload = buildAlertPayload({ serverId, hostLabel, agent: event.agent, reason: event.reason, workspaces, requestId: event.requestId });
+      const payload = buildAlertPayload({ serverId, hostLabel, agent: event.agent, reason: event.reason, workspaces, requestId: event.requestId, assistantMessage });
       const result = await this.apns.send(device.environment, token, device.bundleId, 10, payload, {
         pushType: "alert", collapseId: event.agent.id,
       });

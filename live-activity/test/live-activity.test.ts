@@ -7,6 +7,7 @@ import { signJwt, validateKey, loadPrivateKey, ApnsClient, requestHeaders } from
 import { alertsEnabled, alertTargets, buildAlertPayload, checkAlert, scanAlerts, ALERT_MAX_AGE_MS, type NotifiedMap } from "../server/notify.ts";
 import { activityRegister, registerInput } from "../shared/contracts.ts";
 import { toLite } from "../server/summary.ts";
+import { buildNotificationPreview, buildPermissionDetails, findLatestAssistantMessageFromTimeline, latestReplyFromEntries, stripMarkdownToText } from "../server/preview.ts";
 import { Store } from "../server/store.ts";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -326,7 +327,7 @@ test("载荷：三种 reason 的 title / body / category，thread-id 与顶层 s
   assert.equal("input" in perm.pendingPermissions[0], false);
   const p = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: perm, reason: "permission" });
   assert.deepEqual(p, {
-    aps: { alert: { title: "需要你批准 · 迁移数据", subtitle: "Studio", body: "运行 npm test" }, sound: "default", category: "paseo.permission", "thread-id": "s1:ag1" },
+    aps: { alert: { title: "需要你批准 · 迁移数据", body: "运行 npm test" }, sound: "default", category: "paseo.permission", "thread-id": "s1:ag1" },
     serverId: "s1", agentId: "ag1", reason: "permission",
   });
   const byName = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: { ...perm, pendingPermissions: [{ name: "Bash" }] }, reason: "permission" });
@@ -343,9 +344,9 @@ test("载荷：三种 reason 的 title / body / category，thread-id 与顶层 s
 
   const fin = agent({ id: "ag3", title: "写文档", workspaceId: "w1" });
   const f = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: fin, reason: "finished", workspaces: ws });
-  // 主标题用工作区名（侧栏行名），副标题是会话标题，正文是项目名 · 机器名
+  // 主标题用工作区名（侧栏行名），没有副标题；取不到最后回复时正文是项目名 · 机器名
   assert.equal(f.aps.alert.title, "完成 · 修登录页");
-  assert.equal(f.aps.alert.subtitle, "写文档");
+  assert.equal("subtitle" in f.aps.alert, false);
   assert.equal(f.aps.alert.body, "宴小助 · Studio");
   assert.equal(f.aps.category, "paseo.finished");
   assert.equal(f.aps["thread-id"], "s1:ag3");
@@ -435,4 +436,136 @@ test("需要批准的通知带上对应请求 id，正文取那个请求", () =>
   assert.equal(p.aps.alert.body, "运行 npm test");
   const f = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: a, reason: "finished" });
   assert.equal("requestId" in f, false);
+});
+
+// ---------- 嵌套子会话计入工作区状态 ----------
+
+const PARENT = "paseo.parent-agent-id";
+
+test("主会话空闲、子会话运行中：工作区一行 running，点开子会话，行名用工作区标题 / 顶层会话标题", () => {
+  const started = iso(T0 - 300_000);
+  const root = agent({ id: "root", title: "主会话", workspaceId: "w1", updatedAt: iso(T0 - 50_000) });
+  const kid = agent({ id: "kid", title: "子会话", workspaceId: "w1", status: "running", labels: { [PARENT]: "root" },
+    activeTurn: { turnId: "t", startedAt: started }, updatedAt: iso(T0 - 1000) });
+  const ws = new Map([["w1", { project: "宴小助", title: "修登录页" }]]);
+  const h: HostData = { host: { serverId: "s1", label: "Mac" }, agents: new Map([root, kid].map(x => [x.id, x])), workspaces: ws };
+  const st = buildState([h], T0 / 1000);
+  assert.equal(st.running, 1);
+  assert.deepEqual(st.rows, [{ serverId: "s1", agentId: "kid", host: "Mac", title: "修登录页", project: "宴小助", status: "running", since: Date.parse(started) / 1000 }]);
+  // 没有工作区标题：用顶层会话标题，不用子会话标题
+  const noTitle = buildState([{ ...h, workspaces: new Map([["w1", { project: "宴小助", title: null }]]) }], T0 / 1000);
+  assert.equal(noTitle.rows[0].title, "主会话");
+  // 子会话 updatedAt 参与排序
+  const other = agent({ id: "other", status: "running", updatedAt: iso(T0 - 20_000) });
+  const order = buildState([{ ...h, agents: new Map([root, kid, other].map(x => [x.id, x])) }], T0 / 1000);
+  assert.deepEqual(order.rows.map(r => r.agentId), ["kid", "other"]);
+});
+
+test("子会话等你处理 → 工作区 waiting；子会话出错不让工作区变 failed", () => {
+  const root = agent({ id: "r1", workspaceId: "w1", status: "running" });
+  const waitKid = agent({ id: "k1", workspaceId: "w1", labels: { [PARENT]: "r1" }, pendingPermissions: [{ id: "p" }] });
+  const st = buildState([host("s1", "Mac", [root, waitKid])], T0 / 1000);
+  assert.deepEqual([st.waiting, st.running], [1, 0]);
+  assert.equal(st.rows[0].agentId, "k1");
+  assert.equal(st.rows[0].status, "waiting");
+  assert.equal("since" in st.rows[0], false);
+
+  const idleRoot = agent({ id: "r2", workspaceId: "w2" });
+  const failKid = agent({ id: "k2", workspaceId: "w2", status: "error", labels: { [PARENT]: "r2" } });
+  const st2 = buildState([host("s1", "Mac", [idleRoot, failKid])], T0 / 1000);
+  assert.deepEqual([st2.failed, st2.running, st2.waiting], [0, 0, 0]);
+  // 顶层会话运行中 + 子会话出错：仍是 running，点开顶层会话
+  const st3 = buildState([host("s1", "Mac", [{ ...idleRoot, status: "running" }, failKid])], T0 / 1000);
+  assert.deepEqual([st3.failed, st3.running], [0, 1]);
+  assert.equal(st3.rows[0].agentId, "r2");
+});
+
+test("孙会话也计入；父已归档时子会话当顶层；跨机器父会话不算嵌套", () => {
+  const root = agent({ id: "g0", workspaceId: "w1" });
+  const mid = agent({ id: "g1", workspaceId: "w1", labels: { [PARENT]: "g0" } });
+  const leaf = agent({ id: "g2", workspaceId: "w1", status: "running", labels: { [PARENT]: "g1", "paseo.parent-server-id": "s1" } });
+  const st = buildState([host("s1", "Mac", [root, mid, leaf])], T0 / 1000);
+  assert.equal(st.running, 1);
+  assert.deepEqual(st.rows.map(r => r.agentId), ["g2"]);
+
+  const archivedParent = agent({ id: "ap", title: "旧主会话", archivedAt: iso(T0) });
+  const orphan = agent({ id: "oc", title: "子", status: "running", labels: { [PARENT]: "ap" } });
+  const st2 = buildState([host("s1", "Mac", [archivedParent, orphan])], T0 / 1000);
+  assert.deepEqual(st2.rows.map(r => [r.agentId, r.title]), [["oc", "子"]]);
+
+  const remoteKid = agent({ id: "rk", status: "running", labels: { [PARENT]: "g0", "paseo.parent-server-id": "s9" } });
+  const st3 = buildState([host("s1", "Mac", [root, remoteKid])], T0 / 1000);
+  assert.deepEqual(st3.rows.map(r => r.agentId), ["rk"]);
+});
+
+test("嵌套子会话仍不发通知", () => {
+  const notified: NotifiedMap = new Map();
+  const root = agent({ id: "nr" });
+  const kid = attn("finished", T0 - 1000, { id: "nk", labels: { [PARENT]: "nr" } });
+  const list = new Map([root, kid].map(x => [x.id, x]));
+  assert.equal(checkAlert(kid, "s1", list, notified, T0), null);
+});
+
+// ---------- 通知正文预览（移植官方） ----------
+
+test("preview：去 Markdown、折叠空白、超过 220 字以 ... 截断", () => {
+  assert.equal(stripMarkdownToText("# 标题\n> 引用\n- **粗** `代码` [链接](http://x) ![图](a.png) <http://y>"), "标题\n引用\n粗 代码 链接 图 http://y");
+  assert.equal(buildNotificationPreview("```ts\nconst a = 1;\n```\n\n  完成了   修改\n"), "const a = 1; 完成了 修改");
+  assert.equal(buildNotificationPreview(null), null);
+  assert.equal(buildNotificationPreview("  \n```\n```"), null);
+  const exact = "字".repeat(220);
+  assert.equal(buildNotificationPreview(exact), exact);
+  const long = buildNotificationPreview("字".repeat(221) + "😀".repeat(5));
+  assert.equal(long, "字".repeat(217) + "...");
+  // 按码点截，不切坏 emoji
+  assert.equal(buildNotificationPreview("😀".repeat(230)), "😀".repeat(217) + "...");
+});
+
+test("最后一条回复：拼接时间线末尾连续的 assistant_message 片段；兼容 entry.item 与直接 item", () => {
+  assert.equal(findLatestAssistantMessageFromTimeline([
+    { type: "assistant_message", text: "旧回复" }, { type: "tool_call" },
+    { type: "assistant_message", text: "新" }, { type: "assistant_message", text: "回复" }, { type: "reasoning", text: "想" },
+  ]), "新回复");
+  assert.equal(findLatestAssistantMessageFromTimeline([{ type: "user_message", text: "hi" }]), null);
+  assert.equal(latestReplyFromEntries([
+    { item: { type: "user_message", text: "问" } },
+    { item: { type: "assistant_message", text: "答**一**" } },
+    { type: "assistant_message", text: "二" },
+    null, { item: "bad" },
+  ]), "答**一**二");
+  assert.equal(latestReplyFromEntries([]), null);
+});
+
+test("权限说明：title 与 description 用 - 拼，相同只留一个；否则 input JSON，再否则 name / kind", () => {
+  assert.equal(buildPermissionDetails({ title: "运行命令", description: "npm test" }), "运行命令 - npm test");
+  assert.equal(buildPermissionDetails({ title: "运行命令", description: " 运行命令 " }), "运行命令");
+  assert.equal(buildPermissionDetails({ description: "只有描述" }), "只有描述");
+  assert.equal(buildPermissionDetails({ inputJson: '{"command":"ls"}', name: "Bash" }), '{"command":"ls"}');
+  assert.equal(buildPermissionDetails({ name: " Bash ", kind: "tool" }), "Bash");
+  assert.equal(buildPermissionDetails({ kind: "tool" }), "tool");
+  assert.equal(buildPermissionDetails(null), null);
+  // toLite 存 description 与 input 的 JSON（截到 300 字），不持有原始对象
+  const lite = toLite({ ...agent({ id: "pl" }), pendingPermissions: [{ id: "r1", name: "Bash", kind: "tool", description: "d".repeat(400), input: { command: "x".repeat(400) } }] } as unknown as AgentLite);
+  const perm = lite.pendingPermissions[0];
+  assert.equal(perm.description?.length, 300);
+  assert.equal(perm.inputJson?.length, 300);
+  assert.ok(perm.inputJson?.startsWith('{"command":"xxx'));
+  assert.equal("input" in perm, false);
+  const noText = toLite({ ...agent({ id: "pl2" }), pendingPermissions: [{ id: "r1", name: "Bash", kind: "tool", input: { command: "ls  -la" } }] } as unknown as AgentLite);
+  const p = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: noText, reason: "permission", requestId: "r1" });
+  assert.equal(p.aps.alert.body, '{"command":"ls -la"}');
+});
+
+test("载荷：完成用最后回复的预览作正文，无 subtitle；取不到回复退回项目名 · 机器名；出错折叠空白", () => {
+  const ws = new Map([["w1", { project: "宴小助", title: "修登录页" }]]);
+  const fin = agent({ id: "f1", title: "写文档", workspaceId: "w1" });
+  const f = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: fin, reason: "finished", workspaces: ws, assistantMessage: "## 已完成\n\n- 改了 **登录页**\n- 跑了测试" });
+  assert.deepEqual(f.aps.alert, { title: "完成 · 修登录页", body: "已完成 改了 登录页 跑了测试" });
+  for (const assistantMessage of [null, undefined, "   "]) {
+    assert.equal(buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: fin, reason: "finished", workspaces: ws, assistantMessage }).aps.alert.body, "宴小助 · Studio");
+  }
+  const err = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: { ...fin, lastError: "连接\n\n  失败  了" }, reason: "error", workspaces: ws });
+  assert.deepEqual(err.aps.alert, { title: "出错了 · 修登录页", body: "连接 失败 了" });
+  const perm = buildAlertPayload({ serverId: "s1", hostLabel: "Studio", agent: { ...fin, pendingPermissions: [{ id: "r1", title: "编辑文件", description: "src/a.ts" }] }, reason: "permission", requestId: "r1", workspaces: ws });
+  assert.deepEqual(perm.aps.alert, { title: "需要你批准 · 修登录页", body: "编辑文件 - src/a.ts" });
 });

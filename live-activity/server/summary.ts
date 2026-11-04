@@ -1,4 +1,5 @@
 // 纯函数：把各机器的会话汇总成实时活动的 content-state（规则与 App 端 LiveActivityController.snapshot 一致）。
+import { safeStringify } from "./preview.ts";
 
 /** 汇总只用到的会话字段（来自 AgentSnapshotPayload）。 */
 export interface AgentLite {
@@ -19,8 +20,13 @@ export interface AgentLite {
   cwd?: string | null;
 }
 
-/** 权限请求只留通知要用的字段。 */
-export interface PermissionLite { id?: string | null; title?: string | null; name?: string | null; kind?: string | null }
+/** 权限请求只留通知要用的字段（description / input / metadata 截到 300 字以内存）。 */
+export interface PermissionLite {
+  id?: string | null; title?: string | null; name?: string | null; kind?: string | null;
+  description?: string | null;
+  /** input / metadata 序列化后的 JSON（截短），只用于通知正文。 */
+  inputJson?: string | null; metadataJson?: string | null;
+}
 
 export interface HostRef { serverId: string; label: string }
 
@@ -49,6 +55,8 @@ export const PARENT_AGENT_LABEL = "paseo.parent-agent-id";
 export const PARENT_SERVER_LABEL = "paseo.parent-server-id";
 
 export const ERROR_MAX_CHARS = 200;
+/** 权限请求的 description / input JSON 最多存这么多字（通知正文只用前 220 字）。 */
+export const PERMISSION_TEXT_MAX_CHARS = 300;
 
 /** 按字符（码点）截短，不切坏 emoji / 生僻字。 */
 export function clipChars(text: string, max: number): string {
@@ -62,12 +70,7 @@ export function toLite(agent: AgentLite): AgentLite {
     id: agent.id,
     title: agent.title ?? null,
     status: agent.status,
-    pendingPermissions: (agent.pendingPermissions ?? []).map(p => ({
-      id: typeof p?.id === "string" ? p.id : null,
-      title: typeof p?.title === "string" ? p.title : null,
-      name: typeof p?.name === "string" ? p.name : null,
-      kind: typeof p?.kind === "string" ? p.kind : null,
-    })),
+    pendingPermissions: (agent.pendingPermissions ?? []).map(toPermissionLite),
     activeTurn: agent.activeTurn ?? null,
     labels: agent.labels ?? {},
     archivedAt: agent.archivedAt ?? null,
@@ -82,13 +85,38 @@ export function toLite(agent: AgentLite): AgentLite {
   };
 }
 
-/** 嵌套子会话：有父会话标签、父会话在同一台机器上、且父会话确实在这台机器的列表里。 */
+const textOrNull = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
+/** 原始对象（有值）序列化成截短的 JSON；空值或序列化失败为 null。 */
+function jsonPreview(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const json = safeStringify(value);
+  return json ? clipChars(json, PERMISSION_TEXT_MAX_CHARS) : null;
+}
+
+/** 已是精简形状（inputJson 等）的保持不变，原始快照（input / metadata 对象）转成截短的 JSON。 */
+function toPermissionLite(raw: unknown): PermissionLite {
+  const p = (raw ?? {}) as PermissionLite & { input?: unknown; metadata?: unknown };
+  const description = textOrNull(p.description);
+  return {
+    id: textOrNull(p.id),
+    title: textOrNull(p.title),
+    name: textOrNull(p.name),
+    kind: textOrNull(p.kind),
+    description: description === null ? null : clipChars(description, PERMISSION_TEXT_MAX_CHARS),
+    inputJson: textOrNull(p.inputJson) ?? jsonPreview(p.input),
+    metadataJson: textOrNull(p.metadataJson) ?? jsonPreview(p.metadata),
+  };
+}
+
+/** 嵌套子会话：有父会话标签、父会话在同一台机器上、且父会话确实在这台机器的列表里（未归档）。 */
 export function isNested(agent: AgentLite, serverId: string, agents: ReadonlyMap<string, AgentLite>): boolean {
   const parentId = agent.labels[PARENT_AGENT_LABEL];
   if (!parentId) return false;
   const parentServer = agent.labels[PARENT_SERVER_LABEL];
   if (parentServer && parentServer !== serverId) return false;
-  return agents.has(parentId);
+  const parent = agents.get(parentId);
+  return !!parent && !parent.archivedAt;
 }
 
 export function classify(agent: AgentLite): ActivityRow["status"] | null {
@@ -125,41 +153,75 @@ export function projectName(agent: AgentLite, workspaces?: ReadonlyMap<string, W
 }
 
 /**
- * 汇总成一份状态，**按工作区合并**（同 App 侧栏：一个工作区一行，状态取其中最紧急的会话：
- * 等你处理 → 出错 → 运行中；同级取最近活动的，它也是点开的那个会话）。计数也按工作区。
+ * 汇总成一份状态，**按工作区合并**（同 App 侧栏 groups + groupBucket）：
+ * - 行按顶层会话（不是嵌套子会话的）所在工作区分组，一个工作区一行；
+ * - 状态取组内顶层会话最紧急的（等你处理 → 出错 → 运行中），再加上它们的嵌套子会话（递归，子的子也算），
+ *   子会话只有等你处理 / 运行中才计入（出错不计入）；
+ * - 点开的会话是决定状态的那个（可以是子会话），同级取最近活动的；行名是工作区标题，没有就用顶层会话标题。
+ * 计数也按工作区。
  */
 export function buildState(hosts: readonly HostData[], nowSec: number): ContentState {
-  const groups = new Map<string, { row: ActivityRow; recent: number }>();
+  interface Pick { agent: AgentLite; root: AgentLite; status: ActivityRow["status"]; at: number }
+  interface Group { host: HostRef; workspaces?: ReadonlyMap<string, WorkspaceInfo>; best: Pick | null; recent: number; since: number | null }
+  const groups = new Map<string, Group>();
   const offline: string[] = [];
   for (const { host, agents, workspaces } of hosts) {
     if (!agents) { offline.push(host.label); continue; }
+    // 父会话 ID → 未归档的嵌套子会话。
+    const children = new Map<string, AgentLite[]>();
     for (const agent of agents.values()) {
-      if (agent.archivedAt || isNested(agent, host.serverId, agents)) continue;
-      const status = classify(agent);
-      if (!status) continue;
-      const workspace = agent.workspaceId ? workspaces?.get(agent.workspaceId) : undefined;
-      // 行名同侧栏：工作区标题，没有就用会话标题。
-      const title = workspace?.title?.trim() ? workspace.title : (agent.title?.trim() ? agent.title : "新会话");
-      const row: ActivityRow = { serverId: host.serverId, agentId: agent.id, host: host.label, title, status };
-      const project = projectName(agent, workspaces);
-      if (project) row.project = project;
-      const since = status === "running" ? seconds(agent.activeTurn?.startedAt) : null;
-      if (since !== null) row.since = since;
-      const recent = seconds(agent.updatedAt) ?? 0;
-      const key = `${host.serverId}/${agent.workspaceId ?? `agent:${agent.id}`}`;
-      const existing = groups.get(key);
-      if (!existing) { groups.set(key, { row, recent }); continue; }
-      // 运行时长取这个工作区里最早开始的回合。
-      const longest = [existing.row.since, row.since].filter((v): v is number => v !== undefined);
-      const more = RANK[row.status] < RANK[existing.row.status]
-        || (RANK[row.status] === RANK[existing.row.status] && recent > existing.recent);
-      const next = more ? row : existing.row;
-      if (next.status === "running" && longest.length) next.since = Math.min(...longest);
-      else delete next.since;
-      groups.set(key, { row: next, recent: Math.max(recent, existing.recent) });
+      if (agent.archivedAt || !isNested(agent, host.serverId, agents)) continue;
+      const parentId = agent.labels[PARENT_AGENT_LABEL];
+      const list = children.get(parentId);
+      if (list) list.push(agent); else children.set(parentId, [agent]);
+    }
+    for (const root of agents.values()) {
+      if (root.archivedAt || isNested(root, host.serverId, agents)) continue;
+      const key = `${host.serverId}/${root.workspaceId ?? `agent:${root.id}`}`;
+      let group = groups.get(key);
+      if (!group) { group = { host, workspaces, best: null, recent: 0, since: null }; groups.set(key, group); }
+      const g = group;
+      const consider = (agent: AgentLite, status: ActivityRow["status"] | null) => {
+        const at = seconds(agent.updatedAt) ?? 0;
+        g.recent = Math.max(g.recent, at);
+        if (!status) return;
+        if (status === "running") {
+          const started = seconds(agent.activeTurn?.startedAt);
+          if (started !== null) g.since = g.since === null ? started : Math.min(g.since, started);
+        }
+        const best = g.best;
+        if (!best || RANK[status] < RANK[best.status] || (RANK[status] === RANK[best.status] && at > best.at)) {
+          g.best = { agent, root, status, at };
+        }
+      };
+      consider(root, classify(root));
+      const stack = [root.id];
+      const seen = new Set(stack);
+      for (let id = stack.pop(); id !== undefined; id = stack.pop()) {
+        for (const child of children.get(id) ?? []) {
+          if (seen.has(child.id)) continue;
+          seen.add(child.id);
+          const status = classify(child);
+          consider(child, status === "waiting" || status === "running" ? status : null);
+          stack.push(child.id);
+        }
+      }
     }
   }
-  const all = [...groups.values()];
+  const all: { row: ActivityRow; recent: number }[] = [];
+  for (const g of groups.values()) {
+    if (!g.best) continue;
+    const { agent, root, status } = g.best;
+    const workspace = root.workspaceId ? g.workspaces?.get(root.workspaceId) : undefined;
+    // 行名同侧栏：工作区标题，没有就用顶层会话的标题（不用子会话标题）。
+    const title = workspace?.title?.trim() ? workspace.title : (root.title?.trim() ? root.title : "新会话");
+    const row: ActivityRow = { serverId: g.host.serverId, agentId: agent.id, host: g.host.label, title, status };
+    const project = projectName(root, g.workspaces);
+    if (project) row.project = project;
+    // 运行时长取这个工作区（含子会话）里最早开始的回合。
+    if (status === "running" && g.since !== null) row.since = g.since;
+    all.push({ row, recent: g.recent });
+  }
   const count = (s: ActivityRow["status"]) => all.filter(g => g.row.status === s).length;
   const running = count("running"), waiting = count("waiting"), failed = count("failed");
   all.sort((a, b) => RANK[a.row.status] - RANK[b.row.status] || b.recent - a.recent);
