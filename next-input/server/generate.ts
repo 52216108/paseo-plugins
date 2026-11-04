@@ -60,7 +60,9 @@ let codexQueue: Promise<unknown> = Promise.resolve();
 export function generateWithCodex(messages: Message[], signal: AbortSignal, cli: string, model = "",
   source = sourceCodexHome()): Promise<string> {
   const run = codexQueue.catch(() => {}).then(() => runCodex(messages, signal, cli, model, source));
-  codexQueue = run;
+  // A run that never settles (a helper process keeping Codex's pipes open) must not block every later prediction:
+  // the queue moves on after a hard limit above Codex's own 45 s timeout.
+  codexQueue = Promise.race([run.catch(() => {}), new Promise(resolve => setTimeout(resolve, 60_000).unref())]);
   return run;
 }
 

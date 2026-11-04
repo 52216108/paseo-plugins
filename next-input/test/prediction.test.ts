@@ -360,6 +360,11 @@ test("只把用户配置里与连接有关的设置带进隔离配置", () => {
   for (const drop of ["notify", "danger-full-access", "mcp_servers", "secret", "profiles", "trust_level", 'model = "gpt-6"'])
     assert.ok(!kept.includes(drop), drop);
   assert.equal(connectionSettings('model = "x"\n[mcp_servers.a]\ncommand = "a"\n'), "");
+  // 多行值不搬（只搬第一行会让 TOML 失效）；裸 [model_providers] 表照样识别。
+  assert.ok(!connectionSettings('forced_chatgpt_workspace_id = [\n  "a",\n]\n').includes("forced"));
+  assert.ok(connectionSettings('forced_chatgpt_workspace_id = ["a", "b"]\n').includes("forced"));
+  const bare = connectionSettings('model_provider = "corp"\n[model_providers]\ncorp.base_url = "https://llm"\n');
+  assert.ok(bare.includes("[model_providers]") && bare.includes('corp.base_url = "https://llm"'));
 });
 
 test("隔离配置：连接用的顶层键在 [features] 之前，服务商表在之后", async () => {
