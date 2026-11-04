@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -80,14 +80,22 @@ export interface IsolatedCodexHome {
   finish(): Promise<void>;
 }
 
-/** Removes isolated homes left by a daemon that crashed mid-prediction (they hold a copy of the login). */
+/**
+ * Removes isolated homes left by a daemon that crashed mid-prediction (they hold a copy of the login). Only real
+ * directories owned by this user count: on a shared /tmp another user could plant an entry with the same prefix,
+ * and a symlink must never be followed.
+ */
 export async function sweepStaleHomes(dir = tmpdir(), olderThanMs = 10 * 60_000, now = Date.now()): Promise<void> {
   let names: string[];
   try { names = await readdir(dir); } catch { return; }
   for (const name of names.filter(n => n.startsWith(PREFIX))) {
     const path = join(dir, name);
     try {
-      if (now - (await stat(path)).mtimeMs > olderThanMs) await rm(path, { recursive: true, force: true });
+      const info = await lstat(path);
+      const mine = typeof process.getuid !== "function" || info.uid === process.getuid();
+      if (info.isDirectory() && !info.isSymbolicLink() && mine && now - info.mtimeMs > olderThanMs) {
+        await rm(path, { recursive: true, force: true });
+      }
     } catch { /* 别的进程刚删掉，忽略。 */ }
   }
 }
