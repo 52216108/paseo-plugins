@@ -9,8 +9,8 @@
 | [`turn-speed`](turn-speed/OVERVIEW.md) | After each Claude Code or Codex turn, shows generation speed at the end of the turn (tok/s, output tokens, generation time, request count). Parses the CLI's own session logs locally on the daemon machine and keeps only timestamps and token counts | In the plugin registry: `paseo plugin add 52216108/turn-speed` |
 | [`usage-reset`](usage-reset/OVERVIEW.md) | Adds one row per account to the bottom of the sidebar showing how much of each Claude / Codex 5-hour and weekly limit is left, colored when you are using it up fast; clicking it lists the exact reset time of each (for example "Tue 10/27 21:00, in 2d 8h"). Only reads the usage report Paseo already fetches | In the plugin registry: `paseo plugin add 52216108/usage-reset` |
 | [`next-input`](next-input/OVERVIEW.md) | Predicts one editable next message on demand when a conversation is opened. Follows the session by default (Codex sessions with Codex, others with Claude) or uses the one you pick, with a selectable model. Tap the paper plane to send it or the text to edit it. | In the plugin registry: `paseo plugin add 52216108/next-input` |
-| [`agent-taskboard`](agent-taskboard/OVERVIEW.md) | Opens the local [agent-taskboard](https://github.com/52216108/agent-taskboard) board from the sidebar. Start the board service on the daemon host first. | From this repository: `paseo plugin add git:52216108/paseo-plugins:agent-taskboard` |
-| `live-activity` | Server-only companion for the native iOS app: while the app is in the background, pushes session status from this Mac and its connected hosts to the Dynamic Island / Lock Screen Live Activity via APNs. Install it only on the Mac that receives the tokens; the APNs key is configured from the app and stored on the daemon host in `~/.paseo/live-activity/` (0600). | From this repository: `paseo plugin add git:52216108/paseo-plugins:live-activity` |
+| [`agent-taskboard`](agent-taskboard/OVERVIEW.md) | Opens the local [agent-taskboard](https://github.com/gavinguo521/agent-taskboard) board from the sidebar. Start the board service on the daemon host first. | From this repository: `paseo plugin add git:gavinguo521/paseo-plugins:agent-taskboard` |
+| `live-activity` | Server-only companion for the native iOS app: while the app is in the background, pushes session status from this Mac and its connected hosts to the Dynamic Island / Lock Screen Live Activity via APNs. Install it only on the Mac that receives the tokens; the APNs key is configured from the app and stored on the daemon host in `~/.paseo/live-activity/` (0600). | From this repository: `paseo plugin add git:gavinguo521/paseo-plugins:live-activity` |
 
 Plugins are installed per daemon, once on each machine; turn on Settings → Plugins → Enable plugins first.
 
@@ -19,7 +19,7 @@ Since 2026-10-25 turn-speed is published from this repository instead of paseo-m
 ## Install from a local directory / hack on it
 
 ```bash
-git clone https://github.com/52216108/paseo-plugins.git
+git clone https://github.com/gavinguo521/paseo-plugins.git
 cd paseo-plugins/<plugin directory>
 npm install
 paseo plugin install "$PWD"
@@ -27,7 +27,7 @@ paseo plugin install "$PWD"
 
 After editing, run `npm run typecheck`, then `paseo plugin reload <plugin id>`.
 
-Skills for cross-session and cross-machine collaboration live in [paseo-mesh](https://github.com/52216108/paseo-mesh).
+Skills for cross-session and cross-machine collaboration live in [paseo-mesh](https://github.com/gavinguo521/paseo-mesh).
 
 ## License
 
